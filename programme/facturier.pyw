@@ -29,7 +29,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.18-3"
+VERSION = "2026.10.18-4"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 DONNEES = Path(os.environ.get("FACTURIER_DONNEES") or ICI.parent / "donnees")
 PORT = int(os.environ.get("FACTURIER_PORT", "8765"))
@@ -44,7 +44,7 @@ ARRET = secrets.token_urlsafe(24)
 PRECEDENT = ICI.parent / "programme_precedent"            # version précédente, pour revenir en arrière
 DEPOT = os.environ.get("FACTURIER_DEPOT", "hubarp/facturier")
 MANIFESTE_URL = os.environ.get("FACTURIER_MANIFESTE", f"https://raw.githubusercontent.com/{DEPOT}/main/version.json")
-URL_AUTORISEE = os.environ.get("FACTURIER_URL_MAJ", f"https://github.com/{DEPOT}/releases/download/")
+URL_AUTORISEE = os.environ.get("FACTURIER_URL_MAJ", f"https://raw.githubusercontent.com/{DEPOT}/main/versions/")
 # Clé publique de signature : seule une version signée par la clé privée d'Antoine peut être installée
 CLE_PUBLIQUE = bytes.fromhex(os.environ.get("FACTURIER_CLE_PUBLIQUE", "f7365461d6fafc0ac4e88533bd8cd2c4680806422f919256f058c9423f627f53"))
 JETON = secrets.token_urlsafe(24)  # change à chaque lancement ; seule la page servie ici le connaît

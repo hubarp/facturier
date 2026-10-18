@@ -1,11 +1,11 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.18-3",
+  "version": "2026.10.18-4",
   "notes": "Première version publiée : mises à jour automatiques et signées.\nFactures reçues dans un onglet de Factures ; TDB devient Douanes.",
-  "url": "https://github.com/hubarp/facturier/releases/download/v2026.10.18-3/facturier-2026.10.18-3.zip",
-  "sha256": "45853a9a053f98a1cd8a25309c32999ddbc42a8e7f0751852e3247c317138360",
-  "taille": 91827
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.18-4.zip",
+  "sha256": "ef05a7b9c7e9ae1fa53f774ad7065ceef5b2fa0a20db4912064e1cf3f39948fe",
+  "taille": 91816
  },
- "signature": "47f9dc15fd07dabf0089560f29bf4ff56906cc54aa9cdb22f80c7443521a8dc663f89de3ae3879545531e1a3b6097fbd8affcb9adaae762ddfa099307870190a"
+ "signature": "998fda3b5f239075c63a56218c79fa2138c8a4e928b9e69b772b7800d473340646811bdac83d8a606cbd57e70c7abd12976a200dbaf09ec97f2fd95961aea406"
 }
