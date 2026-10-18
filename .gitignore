@@ -1,0 +1,8 @@
+# Données et secrets : jamais dans le dépôt
+donnees/
+programme_precedent/
+*.tmp
+__pycache__/
+cle_privee*.txt
+identifiants.txt
+facturier_backup_*.json

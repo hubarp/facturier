@@ -1,0 +1,42 @@
+FACTURIER — mode d'emploi
+=========================
+
+INSTALLATION (une seule fois)
+1. Avant tout, dans l'ancien facturier (le fichier ouvert d'habitude) :
+   Paramètres > Sauvegarde & Export > JSON. Gardez le fichier facturier_backup_....json téléchargé.
+2. Double-cliquez sur « Installer le Facturier ».
+   Il installe Python si besoin (quelques minutes), puis crée l'icône « Facturier »
+   sur le bureau et dans le menu Démarrer, et ouvre le Facturier.
+3. Au premier lancement, cliquez sur « Importer ma sauvegarde » et choisissez le fichier de l'étape 1.
+4. Pour envoyer les factures électroniques : Paramètres > Connexion Super PDP,
+   collez l'identifiant et le secret de l'application créée dans votre compte Super PDP.
+5. N'utilisez plus l'ancien fichier facturier : rangez-le ou supprimez-le pour ne pas confondre.
+
+AU QUOTIDIEN
+- Ouvrez le Facturier par son icône. Il s'ouvre dans sa propre fenêtre, comme un logiciel.
+- Fermer la fenêtre suffit : tout est enregistré automatiquement, au fil de l'eau.
+- Envoyer une facture à un client pro : ouvrir la facture > « Facture électronique »
+  > « Envoyer via Super PDP ». Le statut se met à jour tout seul.
+- Factures de vos fournisseurs : menu « Factures reçues ».
+
+OÙ SONT LES DONNÉES
+- Dans le dossier « donnees » à côté de ce fichier :
+    facturier.json      vos clients, produits et factures
+    sauvegardes\        une copie par jour (les 60 derniers jours)
+    identifiants.txt    la clé Super PDP : NE PAS PARTAGER
+    journal.txt         trace des échanges avec Super PDP, sans aucun secret
+- Pour une sauvegarde hors du PC (clé USB, autre ordinateur) : copiez le dossier « donnees »,
+  ou utilisez toujours Paramètres > Sauvegarde & Export.
+
+SÉCURITÉ
+- Le Facturier n'est joignable que depuis ce PC, jamais depuis le réseau ni internet.
+- La clé Super PDP reste dans identifiants.txt et n'est jamais confiée au navigateur.
+- Ne placez pas ce dossier dans un dossier partagé avec d'autres personnes.
+
+MISES À JOUR
+- Quand une nouvelle version est publiée, un bandeau vert « Nouvelle version disponible » apparaît
+  à l'ouverture, avec la liste des nouveautés. Cliquez sur « Mettre à jour » : le Facturier se recharge
+  tout seul quelques secondes plus tard. Vos données ne sont pas touchées (et sont sauvegardées avant).
+- Paramètres > Mises à jour : voir la version installée, rechercher une mise à jour,
+  ou revenir à la version précédente en cas de souci.
+- Chaque version est signée par Antoine : le Facturier refuse d'installer une version non signée.
