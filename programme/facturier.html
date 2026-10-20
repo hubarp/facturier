@@ -948,10 +948,10 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const EntrepriseCtx = React.createContext({ liste: [], active: 'principale' });
     // Mode « simple » : factures à lignes libres (intitulé + prix), sans catalogue, transport ni douanes
     const estSimple = (data) => (data?.entreprise?.mode === 'simple');
-    const appelRelais = async (chemin, { methode = 'GET', corps, type } = {}) => {
+    const appelRelais = async (chemin, { methode = 'GET', corps, type, entreprise = ENTREPRISE } = {}) => {
       if (!RELAIS) throw new Error('Facturier ouvert comme simple fichier : ouvrez-le par son icône pour parler à Super PDP');
       let r;
-      try { r = await fetch(chemin, { method: methode, body: corps, headers: { 'X-Facturier': RELAIS.jeton, 'X-Entreprise': ENTREPRISE, ...(type ? { 'Content-Type': type } : {}) } }); }
+      try { r = await fetch(chemin, { method: methode, body: corps, headers: { 'X-Facturier': RELAIS.jeton, 'X-Entreprise': entreprise, ...(type ? { 'Content-Type': type } : {}) } }); }
       catch { throw new Error('Le Facturier ne répond plus : fermez cette fenêtre et rouvrez-le par son icône'); }
       const ct = r.headers.get('content-type') || '';
       const res = ct.includes('json') ? await r.json() : await r.blob();
@@ -2780,6 +2780,58 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       </>);
     }
 
+    // Import d'une fiche client depuis une autre entreprise du Facturier (copie : les deux fiches vivent ensuite séparément)
+    function ImportClientAutreEntreprise({ data, updateData, getNextNum, showToast, onClose }) {
+      const ctx = React.useContext(EntrepriseCtx);
+      const autres = ctx.liste.filter(e => e.id !== ctx.active);
+      const [source, setSource] = useState(autres[0] ? autres[0].id : '');
+      const [clients, setClients] = useState(null);
+      const [erreur, setErreur] = useState('');
+      const [q, setQ] = useState('');
+      useEffect(() => {
+        if (!source) return;
+        setClients(null); setErreur('');
+        appelRelais('/api/donnees', { entreprise: source })
+          .then(r => setClients(((r.donnees && r.donnees.clients) || []).filter(c => c.nom)))
+          .catch(e => setErreur(e.message));
+      }, [source]);
+      const present = (c) => data.clients.some(x => (c.siren && chiffres(x.siren) === chiffres(c.siren)) || normNom(x.nom) === normNom(c.nom));
+      const importer = (c) => {
+        const { numero, deletedAt, _cle, _cleL, _ancienneGardee, ...rest } = c;
+        const nouveau = { ...rest, numero: getNextNum() };
+        updateData({ clients: [...data.clients, nouveau] });
+        showToast(`${nomAffiche(c)} importé (${nouveau.numero})`);
+      };
+      const s = normNom(q);
+      const liste = (clients || []).filter(c => !s || normNom(`${c.nom} ${c.enseigne || ''} ${c.ville || ''} ${c.siren || ''}`).includes(s)).sort((a, b) => nomAffiche(a).localeCompare(nomAffiche(b)));
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><div className="modal-title">Importer un client d'une autre entreprise</div><button className="close-btn" onClick={onClose}>×</button></div>
+            {autres.length > 1 && <div className="form-group"><label>Depuis</label><select value={source} onChange={e => setSource(e.target.value)}>{autres.map(e => <option key={e.id} value={e.id}>{e.nom || e.id}</option>)}</select></div>}
+            <p style={{fontSize: 12, color: 'var(--text-muted)', marginBottom: 8}}>Depuis {(autres.find(e => e.id === source) || {}).nom || 'l\'autre entreprise'}. La fiche est copiée avec un nouveau code client ; les deux fiches évoluent ensuite séparément.</p>
+            <div className="search-bar" style={{marginBottom: 10}}><input autoFocus placeholder="Rechercher un nom, une enseigne, une ville, un SIREN…" value={q} onChange={e => setQ(e.target.value)} /></div>
+            {erreur && <div className="vies vies-ko">{erreur}</div>}
+            {!clients && !erreur && <p style={{fontSize: 13}}>Chargement…</p>}
+            {clients && (
+              <div style={{maxHeight: 380, overflowY: 'auto'}}>
+                <table className="verif-liste"><tbody>
+                  {liste.slice(0, 100).map(c => (
+                    <tr key={c.numero}><td>{nomAffiche(c)}{enseigneDistincte(c) && <div className="nom-legal">{c.nom}</div>}</td><td>{c.ville}</td><td style={{textAlign: 'right'}}>
+                      {present(c) ? <span style={{color: 'var(--text-muted)'}}>déjà présent</span> : <button className="btn btn-outline" onClick={() => importer(c)}>Importer</button>}
+                    </td></tr>
+                  ))}
+                  {!liste.length && <tr><td style={{padding: 20, textAlign: 'center'}}>Aucun client</td></tr>}
+                  {liste.length > 100 && <tr><td colSpan="3" style={{padding: 10, textAlign: 'center', color: 'var(--text-muted)'}}>{liste.length - 100} autres : tapez un nom pour affiner</td></tr>}
+                </tbody></table>
+              </div>
+            )}
+            <div className="btn-group"><button className="btn btn-primary" onClick={onClose}>Fermer</button></div>
+          </div>
+        </div>
+      );
+    }
+
     // Page Clients
     function PageClients({ data, updateData, getNextNum, showToast }) {
       const [tab, setTab] = useState('actifs');
@@ -2793,6 +2845,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const [sansSiren, setSansSiren] = useState(false);
       const [etabs, setEtabs] = useState([]);
       const [verifTous, setVerifTous] = useState(null);
+      const [importAutre, setImportAutre] = useState(false);
+      const ctxEnt = React.useContext(EntrepriseCtx);
 
       const clients = tab === 'actifs' ? data.clients : data.clientsSupprimes;
       const clientsUE = data.clients.filter(c => c.nom && clientUE(c));
@@ -2843,7 +2897,10 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       return (
         <div>
-          <div className="page-header"><h1 className="page-title">Clients</h1><button className="btn btn-primary" onClick={openAdd}>{Icons.plus} Nouveau</button></div>
+          <div className="page-header"><h1 className="page-title">Clients</h1><div className="btn-group" style={{marginTop: 0}}>
+            {RELAIS && ctxEnt.liste.length > 1 && <button className="btn btn-outline" onClick={() => setImportAutre(true)}>{Icons.upload} Importer d'une autre entreprise</button>}
+            <button className="btn btn-primary" onClick={openAdd}>{Icons.plus} Nouveau</button></div></div>
+          {importAutre && <ImportClientAutreEntreprise data={data} updateData={updateData} getNextNum={getNextNum} showToast={showToast} onClose={() => setImportAutre(false)} />}
           <div className="tabs">
             <button className={`tab ${tab === 'actifs' ? 'active' : ''}`} onClick={() => setTab('actifs')}>Actifs ({data.clients.filter(c => c.nom).length})</button>
             <button className={`tab ${tab === 'corbeille' ? 'active' : ''}`} onClick={() => setTab('corbeille')}>Corbeille ({data.clientsSupprimes.length})</button>
@@ -3040,6 +3097,14 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     // Page Paramètres
     function PageParametres({ data, updateData, showToast }) {
       const [entreprise, setEntreprise] = useState(data.entreprise);
+      const ctxEnt = React.useContext(EntrepriseCtx);
+      const sauvegardeComplete = async () => {
+        try {
+          const blob = await appelRelais('/api/sauvegarde-complete');
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `facturier_sauvegarde_complete_${new Date().toISOString().split('T')[0]}.zip`; a.click();
+          showToast('Sauvegarde complète exportée');
+        } catch (err) { showToast(err.message); }
+      };
       const save = () => { updateData({ entreprise }); showToast('Paramètres enregistrés'); };
 
       const exportJSON = () => {
@@ -3141,8 +3206,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           <div className="card">
             <div className="card-title">Sauvegarde & Export</div>
             <div className="btn-group" style={{marginTop: 0}}>
-              <button className="btn btn-primary" onClick={exportExcel}>{Icons.download} Excel</button>
-              <button className="btn btn-outline" onClick={exportJSON}>{Icons.download} JSON</button>
+              {RELAIS && ctxEnt.liste.length > 1 && <button className="btn btn-primary" onClick={sauvegardeComplete}>{Icons.download} Sauvegarde complète (toutes les entreprises)</button>}
+              <button className={`btn ${RELAIS && ctxEnt.liste.length > 1 ? 'btn-outline' : 'btn-primary'}`} onClick={exportExcel}>{Icons.download} Excel{ctxEnt.liste.length > 1 ? ' (cette entreprise)' : ''}</button>
+              <button className="btn btn-outline" onClick={exportJSON}>{Icons.download} JSON{ctxEnt.liste.length > 1 ? ' (cette entreprise)' : ''}</button>
               <label className="btn btn-outline" style={{cursor: 'pointer'}}>
                 {Icons.upload} Importer
                 <input type="file" accept=".json" onChange={importData} style={{display: 'none'}} />

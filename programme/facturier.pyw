@@ -29,7 +29,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.20-3"
+VERSION = "2026.10.20-4"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 DONNEES = Path(os.environ.get("FACTURIER_DONNEES") or ICI.parent / "donnees")
 PORT = int(os.environ.get("FACTURIER_PORT", "8765"))
@@ -717,6 +717,24 @@ def act_nommer_entreprise(_q, corps):
     return {"entreprises": liste}
 
 
+def sauvegarde_complete():
+    """Archive zip des données de toutes les entreprises, sans les identifiants Super PDP."""
+    tampon = io.BytesIO()
+    liste = lire_entreprises()
+    with zipfile.ZipFile(tampon, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("entreprises.json", json.dumps(liste, ensure_ascii=False, indent=1))
+        for e in liste:
+            f = fichier_donnees(e["id"])
+            if f.exists():
+                z.write(f, f"{e['id']}/facturier.json")
+        z.writestr("LISEZ-MOI.txt", "Sauvegarde complète du Facturier : un dossier par entreprise (principale = la première).\n"
+                   "Pour restaurer une entreprise : ouvrez-la dans le Facturier, Paramètres > Sauvegarde & Export > Importer,\n"
+                   "et choisissez son fichier facturier.json (après avoir extrait cette archive).\n"
+                   "Les identifiants Super PDP ne sont pas inclus : ils restent sur le PC.\n")
+    journal(f"Sauvegarde complète exportée ({len(liste)} entreprise(s))")
+    return tampon.getvalue()
+
+
 ACTIONS = {
     ("GET", "/api/entreprises"): act_entreprises,
     ("POST", "/api/entreprises"): act_ajouter_entreprise,
@@ -800,6 +818,9 @@ class Gestionnaire(BaseHTTPRequestHandler):
             return self.envoyer(400, {"erreur": "Entreprise inconnue : fermez la fenêtre et rouvrez le Facturier"})
         CTX.entreprise = ident
         try:
+            if methode == "GET" and u.path == "/api/sauvegarde-complete":
+                return self.envoyer(200, sauvegarde_complete(), "application/zip",
+                                    {"Content-Disposition": f'attachment; filename="facturier_sauvegarde_complete_{datetime.now():%Y-%m-%d}.zip"'})
             if methode == "GET" and u.path.startswith("/api/recues/") and u.path.endswith("/pdf"):
                 return self.servir_pdf_recu(u.path.split("/")[3])
             action = ACTIONS.get((methode, u.path))

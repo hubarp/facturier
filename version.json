@@ -1,11 +1,11 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.20-3",
-  "notes": "Nouveau : plusieurs entreprises dans le même Facturier (Paramètres > Entreprises), chacune avec ses clients, ses factures, sa numérotation et sa connexion Super PDP.\nType « Simple » pour une entreprise sans catalogue : factures à lignes libres, sans transport ni douanes.",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-3.zip",
-  "sha256": "4c06659236824d883006eecd46b91d410f6fae553bc13ecc067ea3d5baef4db9",
-  "taille": 104792
+  "version": "2026.10.20-4",
+  "notes": "Nouveau : importer un client depuis une autre entreprise (Clients > « Importer d'une autre entreprise »).\nNouveau : sauvegarde complète de toutes les entreprises en un seul fichier (Paramètres > Sauvegarde & Export).",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-4.zip",
+  "sha256": "73df9bf0e010b6ce4f01a9195b8e2bd866dc0f9d71c2c1728bf7c91f6c98cf0b",
+  "taille": 106673
  },
- "signature": "23c158109448cc3a04184dc2776bd19e7b9754a3c4443a74384e6dd178b0af8a1de304f3d1ee84b3c0cc0d0ba8e1e2386d1d916d37d10cba7d61d882ffed3a0e"
+ "signature": "4836e1b15270956e9e8e203456b4a56d5e4d72ab2db00e2b2ed861038e563c6bd6f49b819d5d2a99e58253ac196a78fd2dff19b8461980f874bfaea245969a04"
 }

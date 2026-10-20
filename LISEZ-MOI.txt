@@ -35,6 +35,9 @@ PLUSIEURS ENTREPRISES
 - Le Facturier s'ouvre toujours sur l'entreprise principale. On change d'entreprise par le menu en haut à gauche ;
   un bandeau de couleur rappelle pour quelle entreprise on facture.
 - Les données d'une autre entreprise sont dans « donnees\entreprises\<code> ».
+- Client commun aux deux : Clients > « Importer d'une autre entreprise » copie sa fiche.
+- Paramètres > Sauvegarde & Export : « Sauvegarde complète » regroupe toutes les entreprises dans un seul
+  fichier zip ; Excel et JSON ne concernent que l'entreprise ouverte.
 
 CLIENTS DE L'UNION EUROPÉENNE
 - Le n° de TVA du client se vérifie dans VIES (registre de la Commission européenne) depuis sa fiche,
