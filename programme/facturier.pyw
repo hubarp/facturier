@@ -87,7 +87,7 @@ def lire_entreprises():
     liste = []
     if FICHIER_ENTREPRISES.exists():
         try:
-            liste = json.loads(FICHIER_ENTREPRISES.read_text(encoding="utf-8"))
+            liste = json.loads(FICHIER_ENTREPRISES.read_text(encoding="utf-8-sig"))
             if not isinstance(liste, list):
                 raise ValueError("liste attendue")
         except (OSError, ValueError) as e:
@@ -708,14 +708,14 @@ def ecrire_json(chemin, obj):
 
 def lire_json(chemin, defaut=None):
     try:
-        return json.loads(chemin.read_text(encoding="utf-8"))
+        return json.loads(chemin.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return defaut
 
 
 def lire_json_strict(chemin, quoi):
     try:
-        return json.loads(chemin.read_text(encoding="utf-8"))
+        return json.loads(chemin.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as e:
         raise ErreurAPI(500, f"Fichier {quoi} illisible ({chemin.name}) : rien ne sera enregistré. Une copie de la veille est dans « sauvegardes ». ({e})")
 
@@ -727,7 +727,9 @@ def empreinte(obj):
 def lire_communs():
     """Contenu complet de clients.json (clients, corbeille, empreintes par entreprise). Erreur s'il est illisible."""
     if not FICHIER_CLIENTS.exists():
-        raise ErreurAPI(500, "Fichier client commun absent : fermez la fenêtre et rouvrez le Facturier")
+        # Fichier supprimé par erreur : reconstruit à partir des copies gardées dans le fichier de chaque entreprise
+        journal("Fichier client commun absent : reconstruit à partir des fichiers des entreprises")
+        journal(f"Reconstruction : {migration_1_clients_communs()}")
     c = lire_json_strict(FICHIER_CLIENTS, "client commun")
     if not isinstance(c, dict) or not isinstance(c.get("clients"), list):
         raise ErreurAPI(500, "Fichier client commun abîmé : rien ne sera enregistré. Une copie de la veille est dans « sauvegardes ».")
@@ -747,13 +749,14 @@ def _code(n):
 
 def meme_client_sans_uid(a, b):
     """Reconnaissance prudente d'une même fiche quand l'une n'a pas d'uid : jamais deux SIREN différents ;
-    même code et même nom, ou même SIREN."""
+    même code et même nom, ou même SIREN avec même nom et même ville (deux établissements restent distincts)."""
     sa, sb = _siren(a), _siren(b)
     if sa and sb and sa != sb:
         return False
-    if str(a.get("numero")) == str(b.get("numero")) and norm_nom(a.get("nom")) and norm_nom(a.get("nom")) == norm_nom(b.get("nom")):
+    meme_nom = bool(norm_nom(a.get("nom"))) and norm_nom(a.get("nom")) == norm_nom(b.get("nom"))
+    if str(a.get("numero")) == str(b.get("numero")) and meme_nom:
         return True
-    return bool(sa) and sa == sb
+    return bool(sa) and sa == sb and meme_nom and norm_nom(a.get("ville")) == norm_nom(b.get("ville"))
 
 
 def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
@@ -762,6 +765,8 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
     « ajout » : les fiches déjà connues ne sont pas modifiées (migration, import d'une sauvegarde).
     Les factures de la source (listes modifiées sur place) suivent les codes renumérotés. Renvoie le compte rendu."""
     actifs, supprimes = communs["clients"], communs["clientsSupprimes"]
+    # Une fiche sans uid n'est comparée qu'aux fiches présentes avant cet appel (jamais à une autre fiche de la même source)
+    actifs_avant, supprimes_avant = list(actifs), list(supprimes)
     base = communs.get("_base") or {}            # uid -> empreinte de la fiche telle que la source l'avait reçue
     tous = lambda: actifs + supprimes
     par_uid = {c.get("uid"): c for c in tous() if c.get("uid")}
@@ -777,9 +782,9 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
             ancien = str(c["numero"])
             cible = par_uid.get(c.get("uid")) if c.get("uid") else None
             if cible is None and not c.get("uid"):
-                cible = next((x for x in actifs if meme_client_sans_uid(c, x)), None)
+                cible = next((x for x in actifs_avant if x in actifs and meme_client_sans_uid(c, x)), None)
                 if cible is None and a_la_corbeille:
-                    cible = next((x for x in supprimes if meme_client_sans_uid(c, x)), None)
+                    cible = next((x for x in supprimes_avant if x in supprimes and meme_client_sans_uid(c, x)), None)
             if cible is not None:
                 if str(cible["numero"]) != ancien:
                     renum.append((ancien, c, str(cible["numero"])))
@@ -788,8 +793,12 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
                     if not inchange and empreinte({**c, "uid": cible.get("uid"), "numero": cible["numero"]}) != empreinte(cible):
                         nouvelle = {**c, "uid": cible["uid"], "numero": cible["numero"]}
                         dans_supprimes = cible in supprimes
-                        (supprimes if dans_supprimes else actifs).remove(cible)
-                        (supprimes if a_la_corbeille else actifs).append(nouvelle)
+                        if dans_supprimes == a_la_corbeille:          # même liste : remplacée sur place (ordre stable)
+                            liste_c = supprimes if dans_supprimes else actifs
+                            liste_c[liste_c.index(cible)] = nouvelle
+                        else:
+                            (supprimes if dans_supprimes else actifs).remove(cible)
+                            (supprimes if a_la_corbeille else actifs).append(nouvelle)
                         par_uid[cible["uid"]] = nouvelle
                         rapport["modifies"] += 1
                 vus_src.add(cible.get("uid"))
@@ -962,7 +971,8 @@ def act_importer(_q, corps):
             raise ErreurAPI(400, "Cette sauvegarde est celle d'une autre entreprise (SIREN différent) : ouvrez la bonne entreprise avant d'importer")
         sauvegarder_donnees(f"avant_import_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=getattr(CTX, "entreprise", None) or "principale")
         d["_revision"] = int((actuel or {}).get("_revision") or 0) + 1   # les fenêtres ouvertes avant l'import ne peuvent plus écrire
-        d["clientsSupprimes"] = []                 # la corbeille d'une sauvegarde ne s'applique jamais aux fiches communes
+        # En mode « ajout », la corbeille de la sauvegarde ne déplace ni ne modifie aucune fiche existante : elle sert
+        # seulement à rattacher ses factures aux bonnes fiches (ajoutées à la corbeille commune si elles sont inconnues)
         res = _ecrire_donnees(d, mode="ajout")
     journal(f"Sauvegarde importée ({len(d['factures'])} factures)")
     return res
@@ -1009,9 +1019,7 @@ def format_donnees():
 def reprendre_fichiers_modifies():
     """Au démarrage : un fichier d'entreprise écrit par une autre version du programme (retour arrière, restauration)
     est réintégré. Seules les fiches qu'il a réellement changées (ou créées) sont reprises."""
-    if not FICHIER_CLIENTS.exists():
-        return
-    communs = lire_communs()
+    communs = lire_communs()                     # reconstruit le fichier commun s'il a disparu
     change = False
     for e in lire_entreprises():
         f = fichier_donnees(e["id"])
@@ -1145,16 +1153,50 @@ ACTIONS = {
 # ---------------------------------------------------------------- serveur web local
 
 class Serveur(ThreadingHTTPServer):
-    """Une seule instance par port (sous Windows, SO_REUSEADDR laisserait un second programme écouter le même port) ;
-    à l'arrêt (mise à jour, retour arrière), les requêtes en cours — un enregistrement — se terminent avant la sortie."""
-    allow_reuse_address = sys.platform != "win32"
+    """À l'arrêt (mise à jour, retour arrière), les requêtes en cours — un enregistrement — se terminent avant la sortie."""
     daemon_threads = False
     block_on_close = True
 
-    def server_bind(self):
-        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+
+_VERROU_FICHIER = None
+
+
+def prendre_verrou(attente=20):
+    """Verrou exclusif sur donnees/.verrou_programme, tenu tant que le programme tourne. Pendant une passation de
+    version, attend que l'ancien programme ait fini de s'arrêter. Toute erreur autre que « déjà verrouillé » laisse
+    démarrer (mieux vaut démarrer sans verrou que pas du tout)."""
+    global _VERROU_FICHIER
+    import errno
+    try:
+        DONNEES.mkdir(parents=True, exist_ok=True)
+        fh = open(DONNEES / ".verrou_programme", "a+")
+    except OSError as e:
+        journal(f"Verrou du programme impossible ({e}) : démarrage sans verrou")
+        return True
+    occupe = {errno.EACCES, errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN), getattr(errno, "EDEADLK", 36), getattr(errno, "EDEADLOCK", 36)}
+    fin = time.time() + attente
+    while True:
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _VERROU_FICHIER = fh
+            return True
+        except OSError as e:
+            if e.errno not in occupe:
+                journal(f"Verrou du programme impossible ({e}) : démarrage sans verrou")
+                return True
+            if time.time() > fin:
+                fh.close()
+                return False
+            time.sleep(0.5)
+        except Exception as e:  # noqa: BLE001
+            journal(f"Verrou du programme impossible ({e!r}) : démarrage sans verrou")
+            return True
 
 
 class Gestionnaire(BaseHTTPRequestHandler):
@@ -1357,6 +1399,13 @@ def main():
         return
     if not page_facturier():
         message("Fichier facturier.html introuvable dans le dossier « programme ».")
+        return
+    # Un seul programme à la fois sur ces données (verrou système, libéré automatiquement à la fin du programme)
+    if not prendre_verrou():
+        if version_active() and fenetre:
+            ouvrir_fenetre(adresse)
+        elif not version_active():
+            message("Le Facturier est déjà en cours de démarrage ou d'arrêt : patientez quelques secondes puis rouvrez-le.")
         return
     try:
         serveur = Serveur(("127.0.0.1", PORT), Gestionnaire)  # uniquement ce PC, jamais le réseau

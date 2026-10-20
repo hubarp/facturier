@@ -455,6 +455,9 @@
       return { ...(modifiable ? actuel : {}), ...snap, siren: snap.siren || (modifiable ? actuel.siren : '') || '', tvaIntra: snap.tvaIntra || (modifiable ? actuel.tvaIntra : '') || '',
         enseigne: snap.nom ? (snap.enseigne || '') : (actuel.enseigne || ''), livraison: snap.livraison && snap.livraison.adresse ? snap.livraison : null };
     };
+    // Fige dans la facture le client tel qu'il est vu à cet instant (SIREN et n° de TVA complétés compris) : à appeler
+    // quand la facture quitte l'état « émise » ou est déposée, pour qu'elle se réimprime ensuite à l'identique
+    const figerClient = (f, data) => ({ ...f, client: clientDeFacture(f, data) });
     // Raison sociale (nom légal, sur les factures) et enseigne (nom d'usage, pour l'affichage et la recherche)
     const normNom = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
     const enseigneDistincte = (c) => (c && c.enseigne && normNom(c.enseigne) !== normNom(c.nom)) ? c.enseigne : '';
@@ -526,7 +529,7 @@
     const verifierVies = async (numero, demandeur) => {
       const r = await appelRelais('/api/vies', { methode: 'POST', corps: JSON.stringify({ numero, demandeur: demandeur || '' }), type: 'application/json' });
       return { vies: { numero: r.pays + r.numero, valide: !!r.valide, nom: r.nom || '', adresse: r.adresse || '', consultation: r.consultation || '', date: r.date || new Date().toISOString(),
-        demandeur: String(demandeur || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase() }, demandeurRefuse: !!r.demandeurRefuse };
+        demandeur: r.demandeurRefuse ? '' : String(demandeur || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase() }, demandeurRefuse: !!r.demandeurRefuse };
     };
     // Adresse renvoyée par VIES (plusieurs lignes, la dernière souvent « code postal + ville ») → champs de la fiche
     const adresseDepuisVies = (texte) => {
@@ -1032,6 +1035,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       out.produits = (d.produits || []).map(migrerProduit);
       out.produitsSupprimes = (d.produitsSupprimes || []).map(migrerProduit);
       out.options = { particulierTTC: true, ...(d.options || {}) };
+      const modeActuel = estSimple(d) ? 'simple' : 'complet';
+      out.factures = out.factures.map(f => f.mode ? f : { ...f, mode: modeActuel });
+      out.facturesSupprimes = out.facturesSupprimes.map(f => f.mode ? f : { ...f, mode: modeActuel });
       const figer = (f) => (f.lignes || []).every(l => !l.produitRef || l.prixHT !== undefined) ? f : { ...f, lignes: figerLignes(f, d) };
       out.factures = (d.factures || []).map(figer);
       out.facturesSupprimes = (d.facturesSupprimes || []).map(figer);
@@ -1110,7 +1116,15 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               let brouillon = null;
               try { brouillon = JSON.parse(localStorage.getItem(CLE_CACHE + '_brouillon') || 'null'); } catch {}
               if (brouillon && brouillon.texte && brouillon.revision === revision.current) {
-                try { setData(migrerDonnees({ ...INITIAL_DATA, ...JSON.parse(brouillon.texte) })); showToast(`Modifications non enregistrées du ${new Date(brouillon.date).toLocaleString('fr-FR')} récupérées`); }
+                try {
+                  // Les clients restent ceux du fichier commun (à jour) ; seules les fiches modifiées dans le brouillon y sont reportées
+                  const b = JSON.parse(brouillon.texte);
+                  const cle = (c) => c.uid || c.numero;
+                  const liste = [...d.clients.map(c => [c, false]), ...(d.clientsSupprimes || []).map(c => [c, true])];
+                  (brouillon.fiches || []).forEach(([c, sup]) => { const i = liste.findIndex(([x]) => cle(x) === cle(c)); if (i >= 0) liste[i] = [c, sup]; else liste.push([c, sup]); });
+                  setData(migrerDonnees({ ...INITIAL_DATA, ...b, clients: liste.filter(x => !x[1]).map(x => x[0]), clientsSupprimes: liste.filter(x => x[1]).map(x => x[0]) }));
+                  showToast(`Modifications non enregistrées du ${new Date(brouillon.date).toLocaleString('fr-FR')} récupérées`);
+                }
                 catch { setData(d); }
               } else {
                 if (brouillon) showToast('Des modifications non enregistrées d\'une session précédente n\'ont pas pu être reprises : les données ont changé depuis');
@@ -1168,7 +1182,19 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         c.postMessage({ type: 'nouvelle', de: moi });
         setTimeout(() => { if (!autre) terminer(); }, 300);
       });
-      const ecrireDonnees = async (texte) => {
+      // Un seul enregistrement à la fois : un enregistrement demandé pendant qu'un autre est en cours attend la fin de
+      // celui-ci, puis n'envoie que si quelque chose a changé (sinon deux envois partiraient avec la même version)
+      const fileEcriture = useRef(Promise.resolve());
+      const ecrireDonnees = (texte) => {
+        const tour = fileEcriture.current.catch(() => {}).then(() => {
+          const aJour = texteAEcrire.current || texte;
+          if (aJour === derniereEcrite.current) return null;
+          return ecrireMaintenant(aJour);
+        });
+        fileEcriture.current = tour;
+        return tour;
+      };
+      const ecrireMaintenant = async (texte) => {
         let r;
         try { r = await appelRelais(`/api/donnees?revision=${revision.current}`, { methode: 'PUT', type: 'application/json', corps: texte }); }
         catch (e) {
@@ -1198,7 +1224,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         });
       };
       const texteAEcrire = useRef(null);
-      ECRITURE.alerte = showToast;
+      ECRITURE.alerte = (m) => showToast(m);
       ECRITURE.maintenant = async (meme) => {
         clearTimeout(minuterieEcriture.current);
         const texte = texteAEcrire.current;
@@ -1234,7 +1260,14 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const texte = JSON.stringify(data);
         texteAEcrire.current = texte;
         if (texte === derniereEcrite.current) return;
-        try { localStorage.setItem(CLE_CACHE + '_brouillon', JSON.stringify({ texte, revision: revision.current, date: new Date().toISOString() })); } catch {}
+        try {
+          // Brouillon de secours : pour les clients (communs aux entreprises), seules les fiches modifiées ici sont retenues
+          const base = JSON.parse(derniereEcrite.current || '{}');
+          const cle = (c) => c.uid || c.numero;
+          const avant = new Map([...(base.clients || []).map(c => [cle(c), JSON.stringify([c, false])]), ...(base.clientsSupprimes || []).map(c => [cle(c), JSON.stringify([c, true])])]);
+          const fiches = [...data.clients.map(c => [c, false]), ...(data.clientsSupprimes || []).map(c => [c, true])].filter(x => avant.get(cle(x[0])) !== JSON.stringify(x));
+          localStorage.setItem(CLE_CACHE + '_brouillon', JSON.stringify({ texte, fiches, revision: revision.current, date: new Date().toISOString() }));
+        } catch {}
         clearTimeout(minuterieEcriture.current);
         essaisEcriture.current = 0;
         minuterieEcriture.current = setTimeout(tenterEcriture, 700);
@@ -1672,7 +1705,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         ...(autreCompte ? [`Le compte Super PDP connecté (${cx.entreprise.formal_name || ''}, SIREN ${sirenCompte}) n'est pas celui de l'entreprise des Paramètres (SIRET ${data.entreprise.siret}) : vérifiez les identifiants`] : [])];
       const t = totauxFacture(f, data);
       const nomFichier = `${f.numero}_facture_electronique.pdf`;
-      const majFacture = (maj) => updateData({ factures: data.factures.map(x => x.numero === f.numero ? { ...x, ...maj } : x) });
+      const majFacture = (maj) => updateData({ factures: data.factures.map(x => x.numero === f.numero
+        ? { ...(maj.efacture && (maj.efacture.id || maj.efacture.deposeeLe) && !(x.efacture && (x.efacture.id || x.efacture.deposeeLe)) ? figerClient(x, data) : x), ...maj } : x) });
       const siren = chiffres(c.siren);
 
       const telechargerSeulement = async () => {
@@ -1854,7 +1888,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           setPaymentModal(idx);
         } else {
           const updated = [...data.factures];
-          updated[idx] = { ...updated[idx], statut: newStatut, datePaiement: null };
+          updated[idx] = { ...figerClient(updated[idx], data), statut: newStatut, datePaiement: null };
           updateData({ factures: updated });
           showToast('Statut mis à jour');
         }
@@ -1862,7 +1896,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const confirmPayment = (datePaiement) => {
         const updated = [...data.factures];
-        updated[paymentModal] = { ...updated[paymentModal], statut: 'payee', datePaiement };
+        updated[paymentModal] = { ...figerClient(updated[paymentModal], data), statut: 'payee', datePaiement };
         updateData({ factures: updated });
         setPaymentModal(null);
         showToast('Facture marquée comme payée');
@@ -2173,7 +2207,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (newStatut === 'payee') setPaymentModal(index);
         else {
           const updated = [...data.factures];
-          updated[index] = { ...updated[index], statut: newStatut, datePaiement: null };
+          updated[index] = { ...figerClient(updated[index], data), statut: newStatut, datePaiement: null };
           updateData({ factures: updated });
           showToast('Statut mis à jour');
         }
@@ -2181,7 +2215,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const confirmPayment = (datePaiement) => {
         const updated = [...data.factures];
-        updated[paymentModal] = { ...updated[paymentModal], statut: 'payee', datePaiement };
+        updated[paymentModal] = { ...figerClient(updated[paymentModal], data), statut: 'payee', datePaiement };
         updateData({ factures: updated });
         setPaymentModal(null);
         showToast('Facture payée');
