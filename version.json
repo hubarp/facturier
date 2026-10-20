@@ -1,11 +1,11 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.20-5",
-  "notes": "Le nom des entreprises dans le menu reprend la désignation complète (ex. SAS SIMON ROUILLARD) et peut se changer dans Paramètres > Entreprises > Renommer.",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-5.zip",
-  "sha256": "fb350471d7162efa74be7a678dc2d3560783408f46f24c3e9a03035be7612a3d",
-  "taille": 107117
+  "version": "2026.10.20-6",
+  "notes": "Nouveau : un seul fichier client pour toutes les entreprises (les fiches des deux entreprises sont regroupées au premier lancement, avec copie de sécurité).\nSécurité des données : une seule fenêtre active, aucun enregistrement ne peut en écraser un autre, reprise des modifications après une fermeture brutale, import de sauvegarde contrôlé.\nFactures : une facture envoyée se réimprime à l'identique ; numéros en double et factures déposées protégés.",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-6.zip",
+  "sha256": "81f1bf56360c8dc7377db49b1f0365a36d342e8e2ee3d23a76e23b6102e36a9c",
+  "taille": 117703
  },
- "signature": "012e23efee932bda25e22414182c3b7949a3b6bed51e3f2b2ff120589137d86072732a647db173f7eb4f12216bfc45ade6b1fdcd7d3b31f507846d5ddc58c203"
+ "signature": "48d88f8734fa866bb5c8f1cd592560d72fe06921d6c3ba23326669b488ac26a64aa66c85827339b3a12d48b8a02a9df8f0d8ff89982220ce06e66d0919d8e906"
 }
