@@ -211,6 +211,12 @@
     .siren-resultat .secondary { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
     .siren-filtre { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: -4px 0 14px; cursor: pointer; color: var(--warning); }
     .siren-manquant { color: var(--warning); font-family: 'DM Sans', sans-serif; font-size: 12px; }
+    .choix-entreprise { margin: -16px 0 22px; padding: 0 4px; }
+    .choix-entreprise select { width: 100%; font-size: 13px; font-weight: 600; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--primary); color: var(--primary); background: var(--primary-light); cursor: pointer; }
+    .bandeau-entreprise { background: var(--primary); color: #fff; border-radius: 10px; padding: 8px 14px; margin-bottom: 18px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+    .bandeau-entreprise button { background: rgba(255,255,255,.18); color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .liste-entreprises td { padding: 8px 10px; font-size: 13px; }
+    .ligne-libre { display: grid; grid-template-columns: 2fr 70px 110px 100px 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
     .alerte-info { background: var(--warning-light); color: #7b341e; border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-top: 6px; }
     .vies { border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-top: 6px; line-height: 1.5; }
     .vies-ok { background: #e7f7ee; color: #14532d; border: 1px solid #c6ead5; }
@@ -540,29 +546,31 @@
       const pro = typeClient(c) !== 'particulier';
       const lv = c.livraison;
       const exo = mentionExoneration(c, t);
-      const totaux = [{ lib: 'Vin HT', val: `${eur(t.vinHT)} €` }];
+      const simple = estSimple(data);
+      const totaux = [{ lib: simple ? 'Sous-total HT' : 'Vin HT', val: `${eur(t.vinHT)} €` }];
       if (t.remiseHT > 0) totaux.push({ lib: `Remise ${tauxTxt(t.remisePct)} %`, val: `-${eur(t.remiseHT)} €` });
-      totaux.push({ lib: 'Transport HT', val: `${eur(t.transportHT)} €` }, { lib: 'Total HT', val: `${eur(t.totalHT)} €`, style: 'sub' },
+      if (!simple || t.transportHT > 0) totaux.push({ lib: 'Transport HT', val: `${eur(t.transportHT)} €` });
+      totaux.push({ lib: 'Total HT', val: `${eur(t.totalHT)} €`, style: 'sub' },
         { lib: `TVA (${tauxTxt(t.taux)} %)`, val: `${eur(t.totalTVA)} €` }, { lib: 'TTC', val: `${eur(t.totalTTC)} €`, style: 'total' });
       const pied = [];
       if (exo) pied.push({ texte: exo, gras: true });
-      pied.push({ texte: "Document simplifié d'accompagnement pour le contrôle fiscal des produits soumis à accises en régime de droits acquittés" });
+      if (!simple) pied.push({ texte: "Document simplifié d'accompagnement pour le contrôle fiscal des produits soumis à accises en régime de droits acquittés" });
       if (pro) pied.push({ texte: m.penalites, mt: 8 }, { texte: m.indemnite }, { texte: m.escompte });
       pied.push({ texte: 'Coordonnées bancaires', gras: true, mt: 10 });
       if (e.rib) pied.push({ texte: e.banque || '' }, { texte: e.rib });
       else { pied.push({ texte: e.banque || '' }); if (e.iban) pied.push({ texte: `IBAN : ${e.iban}${e.bic ? ` — BIC : ${e.bic}` : ''}` }); }
-      pied.push({ texte: `Numéro d'accise : ${e.numeroAccise || ''}`, mt: 5 });
+      if (!simple || e.numeroAccise) pied.push({ texte: `Numéro d'accise : ${e.numeroAccise || ''}`, mt: 5 });
       return {
         t,
-        emetteur: { nom: e.raisonSociale || '', lignes: [e.forme || '', e.adresse || '', `${e.codePostal || ''} ${e.ville || ''}`, `Téléphone : ${e.telephone || ''} - ${e.email || ''}`, `Siret : ${e.siret || ''}`, `N° TVA : ${e.tvaIntra || ''}`, `n° EORI : ${e.eori || ''}`] },
+        emetteur: { nom: e.raisonSociale || '', lignes: [e.forme || '', e.adresse || '', `${e.codePostal || ''} ${e.ville || ''}`, `Téléphone : ${e.telephone || ''} - ${e.email || ''}`, `Siret : ${e.siret || ''}`, `N° TVA : ${e.tvaIntra || ''}`, ...(!simple || e.eori ? [`n° EORI : ${e.eori || ''}`] : [])] },
         titre: `FACTURE N° ${f.numero}`, date: `Date : ${formatDate(f.date)}`,
         client: { titre: `A : ${c.nom || ''}`, lignes: [enseigneDistincte(c), `Adresse : ${c.adresse || ''}`, `${c.codePostal || ''} ${c.ville || ''}`, c.pays || ''].filter(Boolean),
           lignes2: [`Code client : ${c.numero || ''}`, c.siren ? `SIREN : ${c.siren}` : '', c.tvaIntra ? `N° TVA : ${c.tvaIntra}` : ''].filter(Boolean) },
         livraison: lv ? { titre: 'Livré à :', lignes: [lv.nom || '', lv.adresse || '', `${lv.codePostal || ''} ${lv.ville || ''}`, lv.pays || ''].filter(s => s.trim()), lignes2: [] } : null,
-        transport: [[['Transporteur :', f.transporteur || ''], ['n° EA :', e.ea || '']], [['Plaque :', f.plaque || ''], ['Opération :', 'livraison de biens']]],
-        colonnes: [['Référence', 'g'], ['Description', 'g'], ['PU HT', 'd'], ['Quantité', 'c'], ['Montant HT', 'd'], ['Taux TVA', 'c']],
-        lignes: t.lignes.map(l => [l.produitRef, l.libelle, eur(l.prixHT), String(l.quantite), eur(l.montantHT), `${tauxTxt(t.taux)} %`]),
-        infos: [['Échéance :', formatDate(f.echeance)], ['Nb bouteilles', String(t.nbBouteilles)], ['Règlement :', f.reglement || 'virement']],
+        transport: simple ? [] : [[['Transporteur :', f.transporteur || ''], ['n° EA :', e.ea || '']], [['Plaque :', f.plaque || ''], ['Opération :', 'livraison de biens']]],
+        colonnes: [...(simple ? [] : [['Référence', 'g']]), ['Description', 'g'], ['PU HT', 'd'], ['Quantité', 'c'], ['Montant HT', 'd'], ['Taux TVA', 'c']],
+        lignes: t.lignes.map(l => [...(simple ? [] : [estExceptionnel(l) ? '' : l.produitRef]), l.libelle, eur(l.prixHT), String(l.quantite), eur(l.montantHT), `${tauxTxt(t.taux)} %`]),
+        infos: [['Échéance :', formatDate(f.echeance)], ...(simple ? [] : [['Nb bouteilles', String(t.nbBouteilles)]]), ['Règlement :', f.reglement || 'virement']],
         totaux, pied
       };
     };
@@ -703,7 +711,7 @@ ${notes.map(([code, txt]) => `    <ram:IncludedNote><ram:Content>${x(txt)}</ram:
   <rsm:SupplyChainTradeTransaction>
 ${t.lignes.map((l, i) => `    <ram:IncludedSupplyChainTradeLineItem>
       <ram:AssociatedDocumentLineDocument><ram:LineID>${i + 1}</ram:LineID></ram:AssociatedDocumentLineDocument>
-      <ram:SpecifiedTradeProduct><ram:SellerAssignedID>${x(l.produitRef)}</ram:SellerAssignedID><ram:Name>${x(l.libelle)}</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedTradeProduct>${estExceptionnel(l) ? '' : `<ram:SellerAssignedID>${x(l.produitRef)}</ram:SellerAssignedID>`}<ram:Name>${x(l.libelle)}</ram:Name></ram:SpecifiedTradeProduct>
       <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>${prixUnitaire(l.prixHT)}</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="H87">${l.quantite}</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement>${ttaxe()}<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>${eur(l.montantHT)}</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>
@@ -932,10 +940,18 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
     // ===== Relais local Super PDP : actif quand le facturier est ouvert par « Lancer le facturier » =====
     const RELAIS = (window.RELAIS && /^https?:$/.test(location.protocol)) ? window.RELAIS : null;
+    // Entreprise active pour cette fenêtre : la principale à chaque ouverture, l'autre seulement si on la choisit
+    const ENTREPRISE = (() => { try { return (RELAIS && sessionStorage.getItem('facturier_entreprise')) || 'principale'; } catch { return 'principale'; } })();
+    const CLE_CACHE = ENTREPRISE === 'principale' ? 'facturier_data_v4' : `facturier_data_v4_${ENTREPRISE}`;
+    const changerEntreprise = (id) => { try { sessionStorage.setItem('facturier_entreprise', id); } catch {} location.reload(); };
+    const COULEURS_ENTREPRISE = ['#7c3aed', '#0f766e', '#b45309', '#be185d'];
+    const EntrepriseCtx = React.createContext({ liste: [], active: 'principale' });
+    // Mode « simple » : factures à lignes libres (intitulé + prix), sans catalogue, transport ni douanes
+    const estSimple = (data) => (data?.entreprise?.mode === 'simple');
     const appelRelais = async (chemin, { methode = 'GET', corps, type } = {}) => {
       if (!RELAIS) throw new Error('Facturier ouvert comme simple fichier : ouvrez-le par son icône pour parler à Super PDP');
       let r;
-      try { r = await fetch(chemin, { method: methode, body: corps, headers: { 'X-Facturier': RELAIS.jeton, ...(type ? { 'Content-Type': type } : {}) } }); }
+      try { r = await fetch(chemin, { method: methode, body: corps, headers: { 'X-Facturier': RELAIS.jeton, 'X-Entreprise': ENTREPRISE, ...(type ? { 'Content-Type': type } : {}) } }); }
       catch { throw new Error('Le Facturier ne répond plus : fermez cette fenêtre et rouvrez-le par son icône'); }
       const ct = r.headers.get('content-type') || '';
       const res = ct.includes('json') ? await r.json() : await r.blob();
@@ -1010,14 +1026,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const canDeleteFacture = (f) => f.statut === 'emise' && !efactureDeposee(f);
 
     function App() {
-      const [page, setPage] = useState('douanes');
       const [data, setData] = useState(() => {
-        const saved = localStorage.getItem('facturier_data_v4');
+        const saved = localStorage.getItem(CLE_CACHE);
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
             // Copie de sécurité unique avant la première migration v7
-            try { if (!localStorage.getItem('facturier_data_v4_avant_v7')) localStorage.setItem('facturier_data_v4_avant_v7', saved); } catch {}
+            try { if (ENTREPRISE === 'principale' && !localStorage.getItem('facturier_data_v4_avant_v7')) localStorage.setItem('facturier_data_v4_avant_v7', saved); } catch {}
             return migrerDonnees({ ...INITIAL_DATA, ...parsed });
           } catch { return INITIAL_DATA; }
         }
@@ -1029,18 +1044,32 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const [pret, setPret] = useState(!RELAIS);
       const [premiereOuverture, setPremiereOuverture] = useState(false);
       const derniereEcrite = useRef(null);
-      const copieLocale = useRef(!!localStorage.getItem('facturier_data_v4')); // lu avant le premier enregistrement
+      const copieLocale = useRef(!!localStorage.getItem(CLE_CACHE)); // lu avant le premier enregistrement
+      const [page, setPage] = useState(() => estSimple(data) ? 'factures' : 'douanes');
+      // Entreprises gérées par le programme local (la principale + éventuellement d'autres)
+      const [entreprises, setEntreprises] = useState([{ id: 'principale', nom: '' }]);
+      const chargerEntreprises = async () => { if (!RELAIS) return; try { const r = await appelRelais('/api/entreprises'); setEntreprises(r.entreprises); return r.entreprises; } catch { return null; } };
       const minuterieEcriture = useRef(null);
       const erreurEcriture = useRef(false);
       useEffect(() => {
         if (!RELAIS) return;
         (async () => {
+          const liste = await chargerEntreprises();
+          if (liste && !liste.some(e => e.id === ENTREPRISE)) { changerEntreprise('principale'); return; }
           try {
             const r = await appelRelais('/api/donnees');
             if (r.donnees) {
               const d = migrerDonnees({ ...INITIAL_DATA, ...r.donnees });
               derniereEcrite.current = JSON.stringify(r.donnees);
               setData(d);
+              if (estSimple(d)) setPage(p => p === 'douanes' || p === 'produits' ? 'factures' : p);
+            } else if (ENTREPRISE !== 'principale') {
+              // Entreprise tout juste créée : données vides, réglages repris de sa création
+              let reglages = {};
+              try { reglages = JSON.parse(sessionStorage.getItem('facturier_nouvelle_entreprise') || '{}'); sessionStorage.removeItem('facturier_nouvelle_entreprise'); } catch {}
+              const ent = (liste || []).find(e => e.id === ENTREPRISE) || {};
+              setData({ ...INITIAL_DATA, entreprise: { ...INITIAL_DATA.entreprise, raisonSociale: ent.nom || '', mode: reglages.mode || 'simple', prefixeFacture: reglages.prefixe || 'E' } });
+              setPage('parametres');
             } else if (!copieLocale.current) setPremiereOuverture(true);
           } catch (e) { showToast(`Données illisibles : ${e.message}`); setPret('erreur'); return; }
           setPret(true);
@@ -1048,7 +1077,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       }, []);
 
       useEffect(() => {
-        try { localStorage.setItem('facturier_data_v4', JSON.stringify(data)); } catch {}
+        try { localStorage.setItem(CLE_CACHE, JSON.stringify(data)); } catch {}
         if (!RELAIS || pret !== true) return;
         const texte = JSON.stringify(data);
         if (texte === derniereEcrite.current) return;
@@ -1061,6 +1090,27 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           } catch (e) { if (!erreurEcriture.current) { erreurEcriture.current = true; showToast(`Enregistrement impossible : ${e.message}`); } }
         }, 700);
       }, [data, pret]);
+
+      // Le nom affiché dans le sélecteur suit la raison sociale saisie dans Paramètres
+      useEffect(() => {
+        if (!RELAIS || pret !== true) return;
+        const nom = (data.entreprise.raisonSociale || '').trim();
+        const ent = entreprises.find(e => e.id === ENTREPRISE);
+        if (nom && ent && ent.nom !== nom) appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id: ENTREPRISE, nom }) }).then(r => setEntreprises(r.entreprises)).catch(() => {});
+      }, [data.entreprise.raisonSociale, pret, entreprises]);
+      const indexActive = Math.max(0, entreprises.findIndex(e => e.id === ENTREPRISE));
+      useEffect(() => {
+        const c = COULEURS_ENTREPRISE[indexActive % COULEURS_ENTREPRISE.length];
+        document.documentElement.style.setProperty('--primary', c);
+        document.documentElement.style.setProperty('--primary-light', c + '1a');
+      }, [indexActive]);
+      const ajouterEntreprise = async ({ nom, mode, prefixe }) => {
+        const r = await appelRelais('/api/entreprises', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ nom }) });
+        try { sessionStorage.setItem('facturier_nouvelle_entreprise', JSON.stringify({ mode, prefixe })); } catch {}
+        changerEntreprise(r.entreprise.id);
+      };
+      const ctxEntreprise = { liste: entreprises, active: ENTREPRISE, ajouter: ajouterEntreprise };
+      const nomEntreprise = (e, i) => e.nom || (e.id === 'principale' ? 'Entreprise principale' : `Entreprise ${i + 1}`);
 
       // Connexion à Super PDP via le relais local
       const rafraichirConnexion = async () => {
@@ -1138,9 +1188,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         return `C${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
       };
 
+      // Numérotation continue propre à chaque entreprise (préfixe réglable pour une nouvelle entreprise)
       const getNextFactureNum = () => {
-        const nums = data.factures.map(f => parseInt(f.numero.replace('F', '')) || 0);
-        return `F${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
+        const pref = data.entreprise.prefixeFacture || 'F';
+        const nums = [...data.factures, ...(data.facturesSupprimes || [])].filter(f => String(f.numero).startsWith(pref)).map(f => parseInt(String(f.numero).slice(pref.length)) || 0);
+        return `${pref}${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
       };
 
       const stats = {
@@ -1161,15 +1213,29 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         <div className="app">
           <nav className="sidebar">
             <div className="logo">🍷 Facturier</div>
-            <NavItem icon={Icons.home} label="Douanes" active={page === 'douanes'} onClick={() => setPage('douanes')} />
+            {entreprises.length > 1 && (
+              <div className="choix-entreprise">
+                <select value={ENTREPRISE} onChange={e => changerEntreprise(e.target.value)} title="Entreprise pour laquelle vous facturez">
+                  {entreprises.map((e, i) => <option key={e.id} value={e.id}>{nomEntreprise(e, i)}</option>)}
+                </select>
+              </div>
+            )}
+            {!estSimple(data) && <NavItem icon={Icons.home} label="Douanes" active={page === 'douanes'} onClick={() => setPage('douanes')} />}
             <NavItem icon={Icons.chart} label="Suivi" active={page === 'suivi'} onClick={() => setPage('suivi')} badge={nbEnRetard > 0 ? nbEnRetard : null} />
             <NavItem icon={Icons.file} label="Factures" active={page === 'factures'} onClick={() => setPage('factures')} />
-            <NavItem icon={Icons.box} label="Produits" active={page === 'produits'} onClick={() => setPage('produits')} />
+            {!estSimple(data) && <NavItem icon={Icons.box} label="Produits" active={page === 'produits'} onClick={() => setPage('produits')} />}
             <NavItem icon={Icons.users} label="Clients" active={page === 'clients'} onClick={() => setPage('clients')} />
             <NavItem icon={Icons.settings} label="Paramètres" active={page === 'parametres'} onClick={() => setPage('parametres')} />
           </nav>
           <ConnexionCtx.Provider value={ctxConnexion}>
+          <EntrepriseCtx.Provider value={ctxEntreprise}>
           <main className="main">
+            {ENTREPRISE !== 'principale' && (
+              <div className="bandeau-entreprise">
+                <span>Vous facturez pour : {nomEntreprise(entreprises[indexActive] || {}, indexActive)}</span>
+                <button onClick={() => changerEntreprise('principale')}>Revenir à {nomEntreprise(entreprises[0] || { id: 'principale' }, 0)}</button>
+              </div>
+            )}
             {maj && maj.disponible && !maj.disponible.ignoree && majMasquee !== maj.disponible.version && !majEnCours && (
               <div className="card bandeau-maj">
                 <div className="card-title">Nouvelle version disponible : {maj.disponible.version}</div>
@@ -1187,14 +1253,15 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             {pret === 'erreur' && <div className="card bandeau-import"><div className="card-title">Données illisibles</div><p>Le fichier des données n'a pas pu être lu : rien ne sera enregistré pendant cette session. Fermez la fenêtre et rouvrez le Facturier ; si le problème continue, une sauvegarde du jour précédent se trouve dans le dossier « donnees/sauvegardes ».</p></div>}
             {!pret ? <div className="card"><p>Chargement des données…</p></div> : <>
             {premiereOuverture && <BandeauPremiereOuverture updateData={updateData} showToast={showToast} onFini={() => setPremiereOuverture(false)} />}
-            {page === 'douanes' && <PageDouanes data={data} updateData={updateData} setPage={setPage} showToast={showToast} />}
+            {page === 'douanes' && !estSimple(data) && <PageDouanes data={data} updateData={updateData} setPage={setPage} showToast={showToast} />}
             {page === 'suivi' && <PageSuivi data={data} stats={stats} setPage={setPage} updateData={updateData} showToast={showToast} />}
             {page === 'factures' && <PageFactures data={data} updateData={updateData} getNextNum={getNextFactureNum} showToast={showToast} />}
-            {page === 'produits' && <PageProduits data={data} updateData={updateData} getNextRef={getNextProduitRef} showToast={showToast} />}
+            {page === 'produits' && !estSimple(data) && <PageProduits data={data} updateData={updateData} getNextRef={getNextProduitRef} showToast={showToast} />}
             {page === 'clients' && <PageClients data={data} updateData={updateData} getNextNum={getNextClientNum} showToast={showToast} />}
             {page === 'parametres' && <PageParametres data={data} updateData={updateData} showToast={showToast} />}
             </>}
           </main>
+          </EntrepriseCtx.Provider>
           </ConnexionCtx.Provider>
           {toast && <div className="toast">{toast}</div>}
         </div>
@@ -1576,7 +1643,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const exportJSON = () => {
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `facturier_backup_${new Date().toISOString().split('T')[0]}.json`; a.click();
+        const a = document.createElement('a'); a.href = url; a.download = `facturier_backup_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.json`; a.click();
         showToast('Sauvegarde exportée');
       };
 
@@ -1591,7 +1658,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement'];
         const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, f.statut, f.echeance, f.datePaiement]);
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([factHeaders, ...factRows]), 'Factures');
-        XLSX.writeFile(wb, `facturier_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+        XLSX.writeFile(wb, `facturier_export_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.xlsx`);
         showToast('Export Excel généré');
       };
 
@@ -1801,10 +1868,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const [paymentModal, setPaymentModal] = useState(null);
       const [confirmDelete, setConfirmDelete] = useState(null);
       const [errors, setErrors] = useState({});
+      const simple = estSimple(data);
+      // Mode simple : chaque ligne est libre (intitulé + prix), comme le produit exceptionnel
+      const ligneVide = () => simple ? { produitRef: REF_EXCEPTIONNEL, quantite: 1, prixHT: '', libelle: '', contenance: '' } : { produitRef: '', quantite: 1 };
 
       const [form, setForm] = useState({
         numero: '', clientId: '', date: new Date().toISOString().split('T')[0], echeance: '',
-        lignes: [{ produitRef: '', quantite: 1 }], tauxTVA: '', remise: 0,
+        lignes: [ligneVide()], tauxTVA: '', remise: 0,
         transporteur: '', plaque: '', prixTransport: '', statut: 'emise', reglement: 'virement', notes: ''
       });
 
@@ -1847,7 +1917,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         setErrors({});
         setForm({
           numero: getNextNum(), clientId: '', date: new Date().toISOString().split('T')[0], echeance: '',
-          lignes: [{ produitRef: '', quantite: 1 }], tauxTVA: '', remise: 0,
+          lignes: [ligneVide()], tauxTVA: '', remise: 0,
           transporteur: '', plaque: '', prixTransport: '', statut: 'emise', reglement: 'virement', notes: ''
         });
         setMode('create');
@@ -1865,7 +1935,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         setMode('create');
       };
 
-      const addLigne = () => setForm(prev => ({ ...prev, lignes: [...prev.lignes, { produitRef: '', quantite: 1 }] }));
+      const addLigne = () => setForm(prev => ({ ...prev, lignes: [...prev.lignes, ligneVide()] }));
       const removeLigne = (i) => setForm(prev => ({ ...prev, lignes: prev.lignes.filter((_, idx) => idx !== i) }));
       const clientForm = (f) => data.clients.find(c => c.numero === f.clientId);
       // Prix et libellé figés au moment du choix du produit, au tarif du client
@@ -1899,13 +1969,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const validate = () => {
         const errs = {};
         if (!form.clientId) errs.clientId = 'Requis';
-        if (!form.transporteur.trim()) errs.transporteur = 'Requis';
-        if (!form.plaque.trim()) errs.plaque = 'Requis';
-        if (form.prixTransport === '' || form.prixTransport === null) errs.prixTransport = 'Requis';
+        if (!simple && !form.transporteur.trim()) errs.transporteur = 'Requis';
+        if (!simple && !form.plaque.trim()) errs.plaque = 'Requis';
+        if (!simple && (form.prixTransport === '' || form.prixTransport === null)) errs.prixTransport = 'Requis';
         if (form.tauxTVA === '' || form.tauxTVA === null) errs.tauxTVA = 'Requis';
         if (!form.lignes.some(l => l.produitRef)) errs.lignes = 'Au moins un produit';
         else if (form.lignes.some(l => estExceptionnel(l) && (!String(l.libelle || '').trim() || l.prixHT === '' || isNaN(parseFloat(l.prixHT)) || parseFloat(l.prixHT) < 0)))
-          errs.lignes = 'Produit exceptionnel : indiquez un intitulé et un prix'
+          errs.lignes = simple ? 'Chaque ligne : un intitulé et un prix' : 'Produit exceptionnel : indiquez un intitulé et un prix'
         setErrors(errs);
         return Object.keys(errs).length === 0;
       };
@@ -2018,7 +2088,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 <div className="form-group"><label>Échéance</label><input type="date" value={form.echeance} onChange={e => setForm({...form, echeance: e.target.value})} /></div>
               </div>
             </div>
-            <div className="card">
+            {!simple && <div className="card">
               <div className="card-title">Transport</div>
               <div className="form-grid">
                 <div className={`form-group required ${errors.transporteur ? 'error' : ''}`}>
@@ -2034,11 +2104,20 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                   <input type="number" min="0" step="0.01" value={form.prixTransport} onChange={e => setForm({...form, prixTransport: e.target.value})} className={errors.prixTransport ? 'error' : ''} />
                 </div>
               </div>
-            </div>
+            </div>}
             <div className="card">
               <div className="card-title">Produits {errors.lignes && <span className="error-msg">({errors.lignes})</span>}</div>
-              <div className="ligne-entete"><span>Produit</span><span>Qté</span><span>Prix unit. HT</span><span>Montant HT</span><span></span></div>
-              {form.lignes.map((l, i) => {
+              <div className="ligne-entete"><span>{simple ? 'Intitulé' : 'Produit'}</span><span>Qté</span><span>Prix unit. HT</span><span>Montant HT</span><span></span></div>
+              {simple && form.lignes.map((l, i) => (
+                <div className="ligne-libre" key={i}>
+                  <input value={l.libelle || ''} placeholder="Ce qui est facturé" onChange={e => updateLigne(i, 'libelle', e.target.value)} />
+                  <input type="number" min="1" value={l.quantite} onChange={e => updateLigne(i, 'quantite', parseInt(e.target.value) || 1)} />
+                  <input type="number" min="0" step="0.01" className="prix-ligne" value={l.prixHT ?? ''} onChange={e => updateLigne(i, 'prixHT', e.target.value)} />
+                  <span style={{fontSize: 13, textAlign: 'right'}}>{l.prixHT !== '' && l.prixHT !== undefined ? `${round2((parseFloat(l.prixHT) || 0) * l.quantite).toFixed(2)} €` : ''}</span>
+                  <button className="btn btn-icon btn-ghost delete" onClick={() => removeLigne(i)}>{Icons.trash}</button>
+                </div>
+              ))}
+              {!simple && form.lignes.map((l, i) => {
                 const exceptionnel = estExceptionnel(l);
                 const produit = data.produits.find(x => x.reference === l.produitRef);
                 const horsCatalogue = l.produitRef && !exceptionnel && !produit;
@@ -2112,13 +2191,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               </div>
             </div>
             <div className="totaux-box">
-              <div className="totaux-ligne"><span>Vin HT</span><span>{vinHT} €</span></div>
+              <div className="totaux-ligne"><span>{simple ? 'Sous-total HT' : 'Vin HT'}</span><span>{vinHT} €</span></div>
               {parseFloat(remiseHT) > 0 && <div className="totaux-ligne"><span>Remise {form.remise} %</span><span>-{remiseHT} €</span></div>}
-              <div className="totaux-ligne"><span>Transport HT</span><span>{transportHT} €</span></div>
+              {!simple && <div className="totaux-ligne"><span>Transport HT</span><span>{transportHT} €</span></div>}
               <div className="totaux-ligne"><span>Total HT</span><span>{totalHT} €</span></div>
               <div className="totaux-ligne"><span>TVA ({form.tauxTVA || 0}%)</span><span>{totalTVA} €</span></div>
               <div className="totaux-ligne total"><span>Total TTC</span><span>{totalTTC} €</span></div>
-              <div style={{fontSize: 12, color: 'var(--text-muted)', marginTop: 8}}>Nb bouteilles: {nbBouteilles}</div>
+              {!simple && <div style={{fontSize: 12, color: 'var(--text-muted)', marginTop: 8}}>Nb bouteilles: {nbBouteilles}</div>}
             </div>
             <div className="btn-group" style={{marginTop: 20}}>
               <button className="btn btn-primary" onClick={saveFacture}>{editIndex !== null ? 'Enregistrer' : 'Créer'}</button>
@@ -2914,6 +2993,50 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       );
     }
 
+    // Paramètres : entreprises gérées (données, numérotation et connexion Super PDP séparées)
+    function CarteEntreprises() {
+      const ctx = React.useContext(EntrepriseCtx);
+      const [form, setForm] = useState(null);
+      const [erreur, setErreur] = useState('');
+      if (!RELAIS) return null;
+      const valider = async () => {
+        if (!form.nom.trim()) { setErreur('Nom obligatoire'); return; }
+        const pref = form.prefixe.trim().toUpperCase();
+        if (!/^[A-Z]{1,4}-?$/.test(pref) || pref === 'F') { setErreur('Préfixe : 1 à 4 lettres, différent de « F » (déjà utilisé par l\'entreprise principale)'); return; }
+        try { await ctx.ajouter({ nom: form.nom.trim(), mode: form.mode, prefixe: pref }); } catch (e) { setErreur(e.message); }
+      };
+      return (
+        <div className="card">
+          <div className="card-title">Entreprises</div>
+          <p style={{fontSize: 13, marginBottom: 10}}>Chaque entreprise a ses propres clients, factures, numérotation, sauvegardes et connexion Super PDP. On passe de l'une à l'autre par le menu en haut à gauche.</p>
+          <table className="liste-entreprises"><tbody>
+            {ctx.liste.map((e, i) => (
+              <tr key={e.id}><td style={{width: 14}}><span style={{display: 'inline-block', width: 10, height: 10, borderRadius: 5, background: COULEURS_ENTREPRISE[i % COULEURS_ENTREPRISE.length]}} /></td>
+                <td><strong>{e.nom || (e.id === 'principale' ? 'Entreprise principale' : e.id)}</strong>{e.id === 'principale' && <span style={{color: 'var(--text-muted)'}}> — principale</span>}</td>
+                <td style={{textAlign: 'right'}}>{e.id === ctx.active ? <span style={{color: 'var(--text-muted)'}}>ouverte</span> : <button className="btn btn-outline" onClick={() => changerEntreprise(e.id)}>Ouvrir</button>}</td></tr>
+            ))}
+          </tbody></table>
+          {!form ? <div className="btn-group"><button className="btn btn-outline" onClick={() => { setErreur(''); setForm({ nom: '', mode: 'simple', prefixe: 'E' }); }}>{Icons.plus} Ajouter une entreprise</button></div> : (
+            <div className="cartouche cartouche-legale" style={{marginTop: 12}}>
+              <div className="cartouche-titre">Nouvelle entreprise</div>
+              <div className="form-grid">
+                <div className="form-group full"><label>Nom (raison sociale)</label><input value={form.nom} placeholder="ex. Simon Rouillard EI" onChange={e => setForm({...form, nom: e.target.value})} /></div>
+                <div className="form-group"><label>Type de facturation</label>
+                  <select value={form.mode} onChange={e => setForm({...form, mode: e.target.value})}>
+                    <option value="simple">Simple : lignes libres (intitulé et prix)</option>
+                    <option value="complet">Complet : produits, transport, douanes</option>
+                  </select></div>
+                <div className="form-group"><label>Préfixe des n° de facture</label><input value={form.prefixe} maxLength={5} onChange={e => setForm({...form, prefixe: e.target.value})} />
+                  <div style={{fontSize: 11, color: 'var(--text-muted)', marginTop: 4}}>Première facture : {(form.prefixe.trim().toUpperCase() || '?')}00001</div></div>
+              </div>
+              {erreur && <div className="vies vies-ko">{erreur}</div>}
+              <div className="btn-group"><button className="btn btn-primary" onClick={valider}>Créer et ouvrir</button><button className="btn btn-outline" onClick={() => setForm(null)}>Annuler</button></div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // Page Paramètres
     function PageParametres({ data, updateData, showToast }) {
       const [entreprise, setEntreprise] = useState(data.entreprise);
@@ -2922,7 +3045,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const exportJSON = () => {
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `facturier_backup_${new Date().toISOString().split('T')[0]}.json`; a.click();
+        const a = document.createElement('a'); a.href = url; a.download = `facturier_backup_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.json`; a.click();
         showToast('Sauvegarde exportée');
       };
 
@@ -2937,7 +3060,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement'];
         const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, f.statut, f.echeance, f.datePaiement]);
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([factHeaders, ...factRows]), 'Factures');
-        XLSX.writeFile(wb, `facturier_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+        XLSX.writeFile(wb, `facturier_export_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.xlsx`);
         showToast('Export Excel généré');
       };
 
@@ -2969,6 +3092,17 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <div className="form-group"><label>Ville</label><input value={entreprise.ville} onChange={e => setEntreprise({...entreprise, ville: e.target.value})} /></div>
               <div className="form-group"><label>Téléphone</label><input value={entreprise.telephone} onChange={e => setEntreprise({...entreprise, telephone: e.target.value})} /></div>
               <div className="form-group"><label>Email</label><input type="email" value={entreprise.email} onChange={e => setEntreprise({...entreprise, email: e.target.value})} /></div>
+              {ENTREPRISE !== 'principale' && (<>
+                <div className="form-group"><label>Type de facturation</label>
+                  <select value={entreprise.mode === 'simple' ? 'simple' : 'complet'} onChange={e => setEntreprise({...entreprise, mode: e.target.value})}>
+                    <option value="simple">Simple : lignes libres (intitulé et prix)</option>
+                    <option value="complet">Complet : produits, transport, douanes</option>
+                  </select></div>
+                <div className="form-group"><label>Préfixe des n° de facture</label>
+                  <input value={entreprise.prefixeFacture || 'F'} readOnly={data.factures.length + (data.facturesSupprimes || []).length > 0} maxLength={5}
+                    onChange={e => setEntreprise({...entreprise, prefixeFacture: e.target.value.toUpperCase()})} />
+                  {data.factures.length + (data.facturesSupprimes || []).length > 0 && <div style={{fontSize: 11, color: 'var(--text-muted)', marginTop: 4}}>Figé : des factures ont déjà été numérotées.</div>}</div>
+              </>)}
             </div>
           </div>
           <div className="card">
@@ -3002,6 +3136,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           </div>
           <div className="btn-group"><button className="btn btn-primary" onClick={save}>Enregistrer</button></div>
           <CarteSuperPDP />
+          <CarteEntreprises />
           <CarteMisesAJour />
           <div className="card">
             <div className="card-title">Sauvegarde & Export</div>
@@ -3013,6 +3148,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 <input type="file" accept=".json" onChange={importData} style={{display: 'none'}} />
               </label>
             </div>
+            <p style={{fontSize: 12, color: 'var(--text-muted)', marginTop: 8}}>Importer remplace toutes les données de l'entreprise ouverte ({data.entreprise.raisonSociale || 'sans nom'}).</p>
           </div>
         </div>
       );

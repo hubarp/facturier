@@ -29,15 +29,13 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.20-2"
+VERSION = "2026.10.20-3"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 DONNEES = Path(os.environ.get("FACTURIER_DONNEES") or ICI.parent / "donnees")
 PORT = int(os.environ.get("FACTURIER_PORT", "8765"))
 API = os.environ.get("SUPER_PDP_API", "https://api.superpdp.tech").rstrip("/")
 VIES = os.environ.get("FACTURIER_VIES", "https://ec.europa.eu/taxation_customs/vies/rest-api").rstrip("/")
-FICHIER_IDS = DONNEES / "identifiants.txt"
-FICHIER_DONNEES = DONNEES / "facturier.json"
-SAUVEGARDES = DONNEES / "sauvegardes"
+FICHIER_ENTREPRISES = DONNEES / "entreprises.json"    # entreprises gérées ; la principale vit directement dans « donnees »
 FICHIER_ARRET = DONNEES / ".programme_actif"
 JOURNAL = DONNEES / "journal.txt"
 PROFIL_NAVIGATEUR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Facturier" / "fenetre"
@@ -58,7 +56,8 @@ STATUTS_ECHEC = {"fr:213", "api:invalid", "api:rejected", "fr:501"}
 
 def journal(msg):
     """Journal sans aucun secret, pour comprendre un problème après coup."""
-    ligne = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}\n"
+    ent = getattr(CTX, "entreprise", None)
+    ligne = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {'[' + ent + '] ' if ent and ent != 'principale' else ''}{msg}\n"
     try:
         DONNEES.mkdir(parents=True, exist_ok=True)
         if JOURNAL.exists() and JOURNAL.stat().st_size > 500_000:
@@ -67,6 +66,48 @@ def journal(msg):
             fh.write(ligne)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------- entreprises
+# Chaque entreprise a ses propres données, sauvegardes et identifiants Super PDP. La principale (la SAS) garde
+# le dossier « donnees » ; les autres ont chacune un sous-dossier « donnees/entreprises/<id> ».
+CTX = threading.local()   # entreprise de la requête en cours (en-tête X-Entreprise)
+VERROU_ENTREPRISES = threading.Lock()
+
+
+def lire_entreprises():
+    try:
+        liste = json.loads(FICHIER_ENTREPRISES.read_text(encoding="utf-8"))
+        liste = [e for e in liste if isinstance(e, dict) and re.fullmatch(r"[a-z0-9]{1,20}", str(e.get("id", "")))]
+    except (OSError, ValueError):
+        liste = []
+    if not any(e["id"] == "principale" for e in liste):
+        liste.insert(0, {"id": "principale", "nom": ""})
+    return liste
+
+
+def ecrire_entreprises(liste):
+    DONNEES.mkdir(parents=True, exist_ok=True)
+    tmp = FICHIER_ENTREPRISES.with_suffix(".tmp")
+    tmp.write_text(json.dumps(liste, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, FICHIER_ENTREPRISES)
+
+
+def dossier(ident=None):
+    ident = ident or getattr(CTX, "entreprise", None) or "principale"
+    return DONNEES if ident == "principale" else DONNEES / "entreprises" / ident
+
+
+def fichier_donnees(ident=None):
+    return dossier(ident) / "facturier.json"
+
+
+def dossier_sauvegardes(ident=None):
+    return dossier(ident) / "sauvegardes"
+
+
+def fichier_ids():
+    return dossier() / "identifiants.txt"
 
 
 def page_facturier():
@@ -80,8 +121,8 @@ def page_facturier():
 
 def lire_identifiants():
     ids = {}
-    if FICHIER_IDS.exists():
-        for ligne in FICHIER_IDS.read_text(encoding="utf-8-sig").splitlines():
+    if fichier_ids().exists():
+        for ligne in fichier_ids().read_text(encoding="utf-8-sig").splitlines():
             if "=" in ligne and not ligne.strip().startswith("#"):
                 k, v = ligne.split("=", 1)
                 ids[k.strip()] = v.strip()
@@ -90,8 +131,8 @@ def lire_identifiants():
 
 
 def ecrire_identifiants(cid, sec):
-    DONNEES.mkdir(parents=True, exist_ok=True)
-    FICHIER_IDS.write_text(
+    dossier().mkdir(parents=True, exist_ok=True)
+    fichier_ids().write_text(
         "# Identifiants de l'application Super PDP (ne pas partager ce fichier)\n"
         f"SUPER_PDP_CLIENT_ID={cid}\nSUPER_PDP_CLIENT_SECRET={sec}\n", encoding="utf-8")
 
@@ -173,7 +214,19 @@ class SuperPDP:
         return obj
 
 
-SPDP = SuperPDP()
+class SuperPDPParEntreprise:
+    """Un client Super PDP (identifiants et jeton) par entreprise, choisi selon la requête en cours."""
+    def __init__(self):
+        self._clients, self._verrou = {}, threading.Lock()
+
+    def __getattr__(self, nom):
+        ident = getattr(CTX, "entreprise", None) or "principale"
+        with self._verrou:
+            client = self._clients.setdefault(ident, SuperPDP())
+        return getattr(client, nom)
+
+
+SPDP = SuperPDPParEntreprise()
 
 
 def multipart(nom_fichier, contenu, type_mime="application/pdf"):
@@ -237,7 +290,7 @@ def act_identifiants(_q, corps):
 
 
 def act_oublier(_q, _corps):
-    if FICHIER_IDS.exists():
+    if fichier_ids().exists():
         ecrire_identifiants("", "")
     SPDP.oublier()
     journal("Identifiants Super PDP effacés")
@@ -520,9 +573,12 @@ def act_maj_etat(_q, _corps):
 
 
 def sauvegarder_donnees(nom):
-    if FICHIER_DONNEES.exists():
-        SAUVEGARDES.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(FICHIER_DONNEES, SAUVEGARDES / f"{nom}.json")
+    """Copie des données de chaque entreprise (avant une mise à jour du programme)."""
+    for e in lire_entreprises():
+        f = fichier_donnees(e["id"])
+        if f.exists():
+            dossier_sauvegardes(e["id"]).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dossier_sauvegardes(e["id"]) / f"{nom}.json")
 
 
 def fichiers_programme(dossier):
@@ -597,16 +653,17 @@ def act_maj_retour(_q, _corps):
 
 
 def act_lire_donnees(_q, _corps):
-    if not FICHIER_DONNEES.exists():
+    if not fichier_donnees().exists():
         return {"donnees": None}
-    return {"donnees": json.loads(FICHIER_DONNEES.read_text(encoding="utf-8"))}
+    return {"donnees": json.loads(fichier_donnees().read_text(encoding="utf-8"))}
 
 
 def act_ecrire_donnees(_q, corps):
     d = json.loads(corps or b"null")
     if not isinstance(d, dict) or not isinstance(d.get("factures"), list) or not isinstance(d.get("clients"), list):
         raise ErreurAPI(400, "Données invalides : rien n'a été enregistré")
-    DONNEES.mkdir(parents=True, exist_ok=True)
+    FICHIER_DONNEES, SAUVEGARDES = fichier_donnees(), dossier_sauvegardes()
+    FICHIER_DONNEES.parent.mkdir(parents=True, exist_ok=True)
     # Une sauvegarde par jour : copie de l'état de la veille avant la première écriture du jour (60 gardées)
     if FICHIER_DONNEES.exists():
         SAUVEGARDES.mkdir(exist_ok=True)
@@ -624,7 +681,46 @@ def act_ecrire_donnees(_q, corps):
     return {"ok": True}
 
 
+
+def act_entreprises(_q, _corps):
+    return {"entreprises": lire_entreprises()}
+
+
+def act_ajouter_entreprise(_q, corps):
+    d = json.loads(corps or b"{}")
+    nom = str(d.get("nom", "")).strip()[:120]
+    if not nom:
+        raise ErreurAPI(400, "Nom de l'entreprise obligatoire")
+    with VERROU_ENTREPRISES:
+        liste = lire_entreprises()
+        n = 2
+        while any(e["id"] == f"e{n}" for e in liste) or (DONNEES / "entreprises" / f"e{n}").exists():
+            n += 1
+        ent = {"id": f"e{n}", "nom": nom}
+        (DONNEES / "entreprises" / ent["id"]).mkdir(parents=True, exist_ok=True)
+        ecrire_entreprises(liste + [ent])
+    journal(f"Entreprise ajoutée : {ent['id']} ({nom})")
+    return {"entreprise": ent, "entreprises": liste + [ent]}
+
+
+def act_nommer_entreprise(_q, corps):
+    d = json.loads(corps or b"{}")
+    ident, nom = str(d.get("id", "")), str(d.get("nom", "")).strip()[:120]
+    with VERROU_ENTREPRISES:
+        liste = lire_entreprises()
+        if not any(e["id"] == ident for e in liste) or not nom:
+            raise ErreurAPI(400, "Entreprise inconnue ou nom vide")
+        for e in liste:
+            if e["id"] == ident:
+                e["nom"] = nom
+        ecrire_entreprises(liste)
+    return {"entreprises": liste}
+
+
 ACTIONS = {
+    ("GET", "/api/entreprises"): act_entreprises,
+    ("POST", "/api/entreprises"): act_ajouter_entreprise,
+    ("POST", "/api/entreprises/nom"): act_nommer_entreprise,
     ("GET", "/api/maj"): act_maj_etat,
     ("POST", "/api/maj"): act_maj_installer,
     ("POST", "/api/maj/retour"): act_maj_retour,
@@ -699,6 +795,10 @@ class Gestionnaire(BaseHTTPRequestHandler):
                 return
             return self.envoyer(403, {"erreur": "Accès refusé"})
         q = urllib.parse.parse_qs(u.query)
+        ident = self.headers.get("X-Entreprise", "") or "principale"
+        if not any(e["id"] == ident for e in lire_entreprises()):
+            return self.envoyer(400, {"erreur": "Entreprise inconnue : fermez la fenêtre et rouvrez le Facturier"})
+        CTX.entreprise = ident
         try:
             if methode == "GET" and u.path.startswith("/api/recues/") and u.path.endswith("/pdf"):
                 return self.servir_pdf_recu(u.path.split("/")[3])

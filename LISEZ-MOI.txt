@@ -28,6 +28,14 @@ PRODUITS ET TARIFS
 - Bouteille vendue en totalité : « Marquer épuisé » plutôt que supprimer. Nouveau millésime : bouton « + »
   sur la ligne du produit, qui recopie la fiche avec une nouvelle référence.
 
+PLUSIEURS ENTREPRISES
+- Paramètres > Entreprises > « Ajouter une entreprise » : chaque entreprise a ses propres clients, factures,
+  numérotation (préfixe à choisir, ex. EI00001), sauvegardes et connexion Super PDP.
+- Type « Simple » : factures à lignes libres (intitulé, quantité, prix), sans produits, transport ni douanes.
+- Le Facturier s'ouvre toujours sur l'entreprise principale. On change d'entreprise par le menu en haut à gauche ;
+  un bandeau de couleur rappelle pour quelle entreprise on facture.
+- Les données d'une autre entreprise sont dans « donnees\entreprises\<code> ».
+
 CLIENTS DE L'UNION EUROPÉENNE
 - Le n° de TVA du client se vérifie dans VIES (registre de la Commission européenne) depuis sa fiche,
   ou pour tous les clients d'un coup : Clients > « Vérifier les n° de TVA… ».
