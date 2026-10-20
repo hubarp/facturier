@@ -1,11 +1,11 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.18-4",
-  "notes": "Première version publiée : mises à jour automatiques et signées.\nFactures reçues dans un onglet de Factures ; TDB devient Douanes.",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.18-4.zip",
-  "sha256": "ef05a7b9c7e9ae1fa53f774ad7065ceef5b2fa0a20db4912064e1cf3f39948fe",
-  "taille": 91816
+  "version": "2026.10.20-1",
+  "notes": "Nouveau : produit exceptionnel (P9999) dans les factures.\nChoisissez « P9999 - Produit exceptionnel » puis saisissez librement son intitulé et son prix (non compté en bouteilles ni en douane).",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-1.zip",
+  "sha256": "af76ef1995401beaf6e85a288b3561f574e6aa571c65c9669b4c89805a60abe9",
+  "taille": 92245
  },
- "signature": "998fda3b5f239075c63a56218c79fa2138c8a4e928b9e69b772b7800d473340646811bdac83d8a606cbd57e70c7abd12976a200dbaf09ec97f2fd95961aea406"
+ "signature": "0a38acff7b92e36784cd39056a3e8ab75cdaef90803f37d6415fc9028418c1722e23691d5d1d606f1feef314dcc5203d3b9fda166e92b0e1a39fe89354f37b04"
 }

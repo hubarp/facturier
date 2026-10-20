@@ -129,6 +129,7 @@
     .status-select.payee { background: #dcfce7; }
     .status-select.enretard { background: #fed7d7; }
     .ligne-produit { display: grid; grid-template-columns: 2fr 80px 100px 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
+    .ligne-exceptionnelle { grid-column: 1 / 3; display: grid; grid-template-columns: 1fr 140px; gap: 8px; padding-left: 12px; border-left: 3px solid var(--primary-light); }
     .totaux-box { background: var(--bg); border-radius: 8px; padding: 16px; margin-top: 16px; }
     .totaux-ligne { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
     .totaux-ligne.total { font-size: 18px; font-weight: 700; color: var(--primary); border-top: 2px solid var(--primary); margin-top: 8px; padding-top: 12px; }
@@ -302,6 +303,10 @@
       return (nbBouteilles * contenanceToCl(contenance)) / 10000;
     };
 
+    // Produit exceptionnel : hors catalogue, intitulé et prix saisis librement sur la facture (pas de bouteilles, pas de douane)
+    const REF_EXCEPTIONNEL = 'P9999';
+    const estExceptionnel = (l) => l && l.produitRef === REF_EXCEPTIONNEL;
+
     const findProduitAnyState = (data, ref) => {
       return data.produits.find(p => p.reference === ref) ||
              (data.produitsSupprimes || []).find(p => p.reference === ref);
@@ -366,7 +371,7 @@
       const taux = f.tauxTVA !== '' && f.tauxTVA !== undefined ? parseFloat(f.tauxTVA) : 0;
       const totalTVA = round2(totalHT * taux / 100);
       const totalTTC = round2(totalHT + totalTVA);
-      const nbBouteilles = lignes.reduce((s, l) => s + l.quantite, 0);
+      const nbBouteilles = lignes.reduce((s, l) => s + (estExceptionnel(l) ? 0 : l.quantite), 0);
       return { lignes, vinHT, remisePct, remiseHT, transportHT, totalHT, taux, totalTVA, totalTTC, nbBouteilles };
     };
 
@@ -1765,6 +1770,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const updateLigne = (i, field, value) => setForm(prev => ({ ...prev, lignes: prev.lignes.map((l, idx) => {
         if (idx !== i) return l;
         if (field === 'produitRef') {
+          if (value === REF_EXCEPTIONNEL) return { produitRef: value, quantite: l.quantite, prixHT: '', libelle: '', contenance: '' };
           // Le prix et le libellé sont figés au moment du choix du produit
           const p = data.produits.find(x => x.reference === value);
           return p ? { produitRef: value, quantite: l.quantite, prixHT: parseFloat(p.prixHT).toFixed(2), libelle: libelleProduit(p), contenance: p.contenance } : { produitRef: '', quantite: l.quantite };
@@ -1785,6 +1791,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (form.prixTransport === '' || form.prixTransport === null) errs.prixTransport = 'Requis';
         if (form.tauxTVA === '' || form.tauxTVA === null) errs.tauxTVA = 'Requis';
         if (!form.lignes.some(l => l.produitRef)) errs.lignes = 'Au moins un produit';
+        else if (form.lignes.some(l => estExceptionnel(l) && (!String(l.libelle || '').trim() || l.prixHT === '' || isNaN(parseFloat(l.prixHT)) || parseFloat(l.prixHT) < 0)))
+          errs.lignes = 'Produit exceptionnel : indiquez un intitulé et un prix'
         setErrors(errs);
         return Object.keys(errs).length === 0;
       };
@@ -1914,7 +1922,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             <div className="card">
               <div className="card-title">Produits {errors.lignes && <span className="error-msg">({errors.lignes})</span>}</div>
               {form.lignes.map((l, i) => {
-                const horsCatalogue = l.produitRef && !data.produits.some(x => x.reference === l.produitRef);
+                const exceptionnel = estExceptionnel(l);
+                const horsCatalogue = l.produitRef && !exceptionnel && !data.produits.some(x => x.reference === l.produitRef);
                 const prixCatalogue = data.produits.find(x => x.reference === l.produitRef)?.prixHT;
                 const prixChange = l.prixHT !== undefined && prixCatalogue !== undefined && parseFloat(prixCatalogue) !== parseFloat(l.prixHT);
                 return (
@@ -1922,11 +1931,18 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                     <select value={l.produitRef} onChange={e => updateLigne(i, 'produitRef', e.target.value)}>
                       <option value="">-- Produit --</option>
                       {horsCatalogue && <option value={l.produitRef}>{l.produitRef} - {l.libelle} ({l.prixHT}€, hors catalogue)</option>}
-                      {data.produits.map(p => <option key={p.reference} value={p.reference}>{p.reference} - {p.cuvee} {p.millesime} {p.contenance} ({p.prixHT}€)</option>)}
+                      {data.produits.filter(p => p.reference !== REF_EXCEPTIONNEL).map(p => <option key={p.reference} value={p.reference}>{p.reference} - {p.cuvee} {p.millesime} {p.contenance} ({p.prixHT}€)</option>)}
+                      <option value={REF_EXCEPTIONNEL}>{REF_EXCEPTIONNEL} - Produit exceptionnel (intitulé et prix à saisir)</option>
                     </select>
                     <input type="number" min="1" value={l.quantite} onChange={e => updateLigne(i, 'quantite', parseInt(e.target.value) || 1)} />
                     <span style={{fontSize: 13, textAlign: 'right'}} title={prixChange ? `Prix figé à ${l.prixHT} € (catalogue actuel : ${prixCatalogue} €)` : ''}>{l.prixHT !== undefined ? `${round2(parseFloat(l.prixHT) * l.quantite).toFixed(2)} €${prixChange ? ' *' : ''}` : ''}</span>
                     <button className="btn btn-icon btn-ghost delete" onClick={() => removeLigne(i)}>{Icons.trash}</button>
+                    {exceptionnel && (
+                      <div className="ligne-exceptionnelle">
+                        <input value={l.libelle || ''} placeholder="Intitulé (ex. : verres gravés, location de tireuse…)" onChange={e => updateLigne(i, 'libelle', e.target.value)} />
+                        <input type="number" min="0" step="0.01" value={l.prixHT} placeholder="Prix HT unitaire" onChange={e => updateLigne(i, 'prixHT', e.target.value)} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
