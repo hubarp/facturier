@@ -1,11 +1,11 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.20-1",
-  "notes": "Nouveau : produit exceptionnel (P9999) dans les factures.\nChoisissez « P9999 - Produit exceptionnel » puis saisissez librement son intitulé et son prix (non compté en bouteilles ni en douane).",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-1.zip",
-  "sha256": "af76ef1995401beaf6e85a288b3561f574e6aa571c65c9669b4c89805a60abe9",
-  "taille": 92245
+  "version": "2026.10.20-2",
+  "notes": "Nouveau : trois prix par bouteille (pro, export, particulier saisi TTC), choisis automatiquement selon le client ; case « Offerte » sur les lignes ; produits « épuisés ».\nNouveau : vérification des n° de TVA des clients de l'Union européenne dans VIES, avec preuve datée.",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-2.zip",
+  "sha256": "ec63924d4b06c032b02c273b53aefcba14fc476c606d049e4fef0c5f0f97ae79",
+  "taille": 100800
  },
- "signature": "0a38acff7b92e36784cd39056a3e8ab75cdaef90803f37d6415fc9028418c1722e23691d5d1d606f1feef314dcc5203d3b9fda166e92b0e1a39fe89354f37b04"
+ "signature": "19c1f3ea4d8352b09e2db05a6eab5d5ce801408e54494755bcbf651e069b6a0f78768752069d387eadf62d93675bc637ab54e912231d5fc6d44505873a7a1403"
 }

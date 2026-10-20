@@ -128,8 +128,23 @@
     .status-select.envoyee { background: #dbeafe; }
     .status-select.payee { background: #dcfce7; }
     .status-select.enretard { background: #fed7d7; }
-    .ligne-produit { display: grid; grid-template-columns: 2fr 80px 100px 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
-    .ligne-exceptionnelle { grid-column: 1 / 3; display: grid; grid-template-columns: 1fr 140px; gap: 8px; padding-left: 12px; border-left: 3px solid var(--primary-light); }
+    .ligne-produit { display: grid; grid-template-columns: 2fr 70px 110px 100px 40px; gap: 8px; margin-bottom: 10px; align-items: center; }
+    .ligne-produit .prix-ligne { text-align: right; }
+    .ligne-exceptionnelle { grid-column: 1 / 2; padding-left: 12px; border-left: 3px solid var(--primary-light); }
+    .ligne-info { grid-column: 1 / -1; display: flex; gap: 16px; align-items: center; font-size: 12px; color: var(--text-muted); margin-top: -4px; }
+    .ligne-info .repli { color: var(--warning); }
+    .ligne-info label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); }
+    .ligne-entete { display: grid; grid-template-columns: 2fr 70px 110px 100px 40px; gap: 8px; font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+    .ligne-entete span:nth-child(3), .ligne-entete span:nth-child(4) { text-align: right; }
+    .produit-epuise td { color: var(--text-muted); }
+    .badge-epuise { background: #e2e8f0; color: #64748b; font-size: 11px; padding: 2px 6px; border-radius: 8px; margin-left: 6px; }
+    .tarifs-grille { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
+    .tarifs-grille input { width: 100%; min-width: 0; }
+    .tarifs-grille label { white-space: nowrap; }
+    .tarifs-grille .aide { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .bascule-ttc { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-left: 6px; vertical-align: middle; }
+    .bascule-ttc button { border: 0; background: #fff; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+    .bascule-ttc button.actif { background: var(--primary); color: #fff; }
     .totaux-box { background: var(--bg); border-radius: 8px; padding: 16px; margin-top: 16px; }
     .totaux-ligne { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
     .totaux-ligne.total { font-size: 18px; font-weight: 700; color: var(--primary); border-top: 2px solid var(--primary); margin-top: 8px; padding-top: 12px; }
@@ -197,6 +212,14 @@
     .siren-filtre { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: -4px 0 14px; cursor: pointer; color: var(--warning); }
     .siren-manquant { color: var(--warning); font-family: 'DM Sans', sans-serif; font-size: 12px; }
     .alerte-info { background: var(--warning-light); color: #7b341e; border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-top: 6px; }
+    .vies { border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-top: 6px; line-height: 1.5; }
+    .vies-ok { background: #e7f7ee; color: #14532d; border: 1px solid #c6ead5; }
+    .vies-ko { background: #fdecec; color: #8a1f1f; border: 1px solid #f5c9c9; }
+    .vies-neutre { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+    .vies .vies-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+    .vies .lien { color: inherit; text-decoration: underline; cursor: pointer; font-weight: 600; background: none; border: 0; padding: 0; font: inherit; }
+    .tva-ok { color: #15803d; font-weight: 700; } .tva-ko { color: var(--danger); font-weight: 700; } .tva-attente { color: var(--warning); font-size: 12px; }
+    .verif-liste td { font-size: 12px; padding: 6px 8px; }
     .address-autocomplete input { width: 100%; }
     .cartouche { grid-column: 1 / -1; border-radius: 10px; padding: 12px 14px 14px; }
     .cartouche-titre { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
@@ -267,7 +290,8 @@
       factures: [],
       facturesSupprimes: [],
       cuvees: [],
-      categorieDouanes: {}
+      categorieDouanes: {},
+      options: { particulierTTC: true }
     };
 
     const CATEGORIES_DOUANES = [
@@ -312,9 +336,34 @@
              (data.produitsSupprimes || []).find(p => p.reference === ref);
     };
 
+    // ===== Tarifs : un prix par type de client sur chaque bouteille =====
+    const TARIFS = [{ key: 'pro', label: 'Pro' }, { key: 'export', label: 'Export' }, { key: 'particulier', label: 'Particulier' }];
+    const nombre = (v) => (v === '' || v === null || v === undefined || isNaN(parseFloat(v))) ? null : parseFloat(v);
+    const prixProduit = (p) => ({ pro: nombre(p?.prix ? p.prix.pro : p?.prixHT), export: nombre(p?.prix?.export), particulier: nombre(p?.prix?.particulier) });
+    const prix4 = (n) => String(Math.round(Number(n) * 10000) / 10000);
+    const tauxOuDefaut = (taux) => nombre(taux) === null ? 20 : nombre(taux);
+    const horsTaxe = (ttc, taux) => prix4(ttc / (1 + tauxOuDefaut(taux) / 100));
+    // Prix d'une bouteille pour un client : son tarif s'il est renseigné, sinon le prix pro
+    const tarifer = (p, client, taux) => {
+      const t = client ? typeClient(client) : 'pro';
+      const px = prixProduit(p);
+      if (t === 'export' && px.export !== null) return { prixHT: px.export.toFixed(2), tarif: 'export' };
+      if (t === 'particulier' && px.particulier !== null)
+        return p.particulierTTC ? { prixHT: horsTaxe(px.particulier, taux), tarif: 'particulier', ttc: px.particulier } : { prixHT: px.particulier.toFixed(2), tarif: 'particulier' };
+      return { prixHT: (px.pro || 0).toFixed(2), tarif: 'pro', ...(t !== 'pro' ? { repli: t } : {}) };
+    };
+    const texteTarif = (p, cle) => {
+      const v = prixProduit(p)[cle];
+      if (v === null) return '';
+      return cle === 'particulier' && p.particulierTTC ? `${v.toFixed(2)} € TTC` : `${v.toFixed(2)} € HT`;
+    };
+    // Prix unitaire pour la facture électronique (jusqu'à 4 décimales, pour les prix calculés depuis un TTC)
+    const prixUnitaire = (n) => { const s = (Math.round(Number(n || 0) * 10000) / 10000).toFixed(4); return s.replace(/(\.\d\d)0{1,2}$/, '$1'); };
+
     // ===== v7 : facture électronique =====
     const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-    const libelleProduit = (p) => [p.cuvee, 'VDF', p.millesime, p.contenance].filter(Boolean).join(' / ');
+    // « VDF » (Vin de France) seulement pour les vins : pas pour un jus de raisin ou une autre boisson sans alcool
+    const libelleProduit = (p, categorie) => [p.cuvee, categorie === 'SANS_ALCOOL' ? '' : 'VDF', p.millesime, p.contenance].filter(Boolean).join(' / ');
     const chiffres = (s) => String(s || '').replace(/\D/g, '');
     const typeClient = (c) => { const t = (c?.type || '').toLowerCase(); return t.includes('export') ? 'export' : t.includes('pro') ? 'pro' : 'particulier'; };
     const estFrance = (c) => ['france', 'fr', ''].includes(String(c?.pays || '').trim().toLowerCase());
@@ -343,22 +392,36 @@
 
     // Lignes de facture avec prix et libellé FIGÉS (stockés dans la facture).
     // Repli sur le catalogue (y compris produits supprimés) pour les anciennes factures.
+    // Une ligne « offerte » garde son prix de référence mais compte 0 € (les bouteilles sortent quand même de la cave)
     const lignesFacture = (f, data) => (f.lignes || []).filter(l => l.produitRef).map(l => {
       const p = findProduitAnyState(data, l.produitRef);
-      const prixHT = l.prixHT !== undefined && l.prixHT !== '' ? parseFloat(l.prixHT) : (p ? parseFloat(p.prixHT) : 0);
+      const prixRef = l.prixHT !== undefined && l.prixHT !== '' ? parseFloat(l.prixHT) : (p ? parseFloat(p.prixHT) : 0);
+      const offerte = !!l.offerte;
+      const prixHT = offerte ? 0 : (isNaN(prixRef) ? 0 : prixRef);
       const quantite = Number(l.quantite) || 0;
+      const libelleBase = l.libelle || (p ? libelleProduit(p, (data.categorieDouanes || {})[p.cuvee]) : l.produitRef);
       return {
         produitRef: l.produitRef,
         quantite,
         prixHT,
-        libelle: l.libelle || (p ? libelleProduit(p) : l.produitRef),
+        prixRef: isNaN(prixRef) ? 0 : prixRef,
+        offerte,
+        libelleBase,
+        libelle: libelleBase + (offerte ? ' (offerte)' : ''),
         contenance: l.contenance || (p ? p.contenance : ''),
         montantHT: round2(prixHT * quantite)
       };
     });
-    const figerLignes = (f, data) => lignesFacture(f, data).map(l => ({
-      produitRef: l.produitRef, quantite: l.quantite, prixHT: l.prixHT.toFixed(2), libelle: l.libelle, contenance: l.contenance
-    }));
+    const figerLignes = (f, data) => {
+      const sources = (f.lignes || []).filter(l => l.produitRef);
+      return lignesFacture(f, data).map((l, i) => {
+        const src = sources[i] || {};
+        const prix = src.prixHT !== undefined && src.prixHT !== '' && !isNaN(parseFloat(src.prixHT)) ? String(src.prixHT) : l.prixRef.toFixed(2);
+        return { produitRef: l.produitRef, quantite: l.quantite, prixHT: prix, libelle: l.libelleBase, contenance: l.contenance,
+          ...(src.tarif ? { tarif: src.tarif } : {}), ...(src.ttc !== undefined ? { ttc: src.ttc } : {}),
+          ...(src.prixManuel ? { prixManuel: true } : {}), ...(l.offerte ? { offerte: true } : {}) };
+      });
+    };
 
     // Totaux d'une facture, arrondis à chaque étape
     const totauxFacture = (f, data) => {
@@ -429,6 +492,38 @@
       'irlande', 'italie', 'lettonie', 'lituanie', 'luxembourg', 'malte', 'pays-bas', 'paysbas', 'hollande', 'pologne', 'portugal', 'republique tcheque', 'tchequie',
       'roumanie', 'slovaquie', 'slovenie', 'suede', 'germany', 'austria', 'belgium', 'denmark', 'spain', 'netherlands', 'italy', 'sweden', 'poland', 'ireland', 'finland', 'lithuania'];
     const paysUE = (pays) => PAYS_UE.includes(String(pays || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+    // ===== n° de TVA intracommunautaire et VIES =====
+    const CODES_UE = { allemagne: 'DE', germany: 'DE', autriche: 'AT', austria: 'AT', belgique: 'BE', belgium: 'BE', bulgarie: 'BG', chypre: 'CY', croatie: 'HR',
+      danemark: 'DK', denmark: 'DK', espagne: 'ES', spain: 'ES', estonie: 'EE', finlande: 'FI', finland: 'FI', grece: 'EL', hongrie: 'HU', irlande: 'IE', ireland: 'IE',
+      italie: 'IT', italy: 'IT', lettonie: 'LV', lituanie: 'LT', lithuania: 'LT', luxembourg: 'LU', malte: 'MT', 'pays-bas': 'NL', paysbas: 'NL', hollande: 'NL',
+      netherlands: 'NL', pologne: 'PL', poland: 'PL', portugal: 'PT', 'republique tcheque': 'CZ', tchequie: 'CZ', roumanie: 'RO', slovaquie: 'SK', slovenie: 'SI', suede: 'SE', sweden: 'SE' };
+    const normPays = (p) => String(p || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    // N° de TVA sans espaces ni points, préfixé du code pays (ajouté d'après le pays de la fiche s'il manque)
+    const tvaNormalisee = (c) => {
+      let n = String(c?.tvaIntra || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      if (!n) return '';
+      if (!/^[A-Z]{2}/.test(n) && CODES_UE[normPays(c.pays)]) n = CODES_UE[normPays(c.pays)] + n;
+      return n.replace(/^GR/, 'EL');
+    };
+    // Client pro de l'Union européenne (hors France) : son n° de TVA conditionne la vente sans TVA
+    const clientUE = (c) => !!c && typeClient(c) !== 'particulier' && !estFrance(c) && paysUE(c.pays);
+    // Dernière vérification VIES, si elle porte bien sur le numéro actuel de la fiche
+    const viesAJour = (c) => (c && c.vies && c.vies.numero && c.vies.numero === tvaNormalisee(c)) ? c.vies : null;
+    const dateFr = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso || '') : d.toLocaleDateString('fr-FR'); };
+    const verifierVies = async (numero, demandeur) => {
+      const r = await appelRelais('/api/vies', { methode: 'POST', corps: JSON.stringify({ numero, demandeur: demandeur || '' }), type: 'application/json' });
+      return { vies: { numero: r.pays + r.numero, valide: !!r.valide, nom: r.nom || '', adresse: r.adresse || '', consultation: r.consultation || '', date: r.date || new Date().toISOString() }, demandeurRefuse: !!r.demandeurRefuse };
+    };
+    // Adresse renvoyée par VIES (plusieurs lignes, la dernière souvent « code postal + ville ») → champs de la fiche
+    const adresseDepuisVies = (texte) => {
+      const lignes = String(texte || '').split(/\n|\r/).map(x => x.trim()).filter(Boolean);
+      if (!lignes.length) return null;
+      if (lignes.length === 1) return { adresse: lignes[0] };
+      const der = lignes[lignes.length - 1];
+      const m = der.match(/^((?:[A-Z]{1,2}-)?\d[\dA-Z]{2,6}(?: [A-Z\d]{2,3})?)\s+(.+)$/i);
+      return m ? { adresse: lignes.slice(0, -1).join(', '), codePostal: m[1], ville: m[2] } : { adresse: lignes.slice(0, -1).join(', '), ville: der };
+    };
+
     // Mention obligatoire quand la facture est sans TVA (vente à l'étranger)
     const mentionExoneration = (c, t) => {
       if (t.taux !== 0 || estFrance(c)) return '';
@@ -609,7 +704,7 @@ ${notes.map(([code, txt]) => `    <ram:IncludedNote><ram:Content>${x(txt)}</ram:
 ${t.lignes.map((l, i) => `    <ram:IncludedSupplyChainTradeLineItem>
       <ram:AssociatedDocumentLineDocument><ram:LineID>${i + 1}</ram:LineID></ram:AssociatedDocumentLineDocument>
       <ram:SpecifiedTradeProduct><ram:SellerAssignedID>${x(l.produitRef)}</ram:SellerAssignedID><ram:Name>${x(l.libelle)}</ram:Name></ram:SpecifiedTradeProduct>
-      <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>${eur(l.prixHT)}</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+      <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>${prixUnitaire(l.prixHT)}</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="H87">${l.quantite}</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement>${ttaxe()}<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>${eur(l.montantHT)}</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>
     </ram:IncludedSupplyChainTradeLineItem>`).join('\n')}
@@ -872,9 +967,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       return { ...data, entreprise: e };
     };
 
-    // Migration v7 : fige les prix des factures existantes (idempotent)
+    // Migrations (idempotentes) : prix figés dans les factures (v7) ; tarifs par type de client sur les produits
+    const migrerProduit = (p) => p.prix ? p : { ...p, prix: { pro: p.prixHT ?? '', export: '', particulier: '' }, particulierTTC: true };
     const migrerDonnees = (d) => {
       const out = { ...d };
+      out.produits = (d.produits || []).map(migrerProduit);
+      out.produitsSupprimes = (d.produitsSupprimes || []).map(migrerProduit);
+      out.options = { particulierTTC: true, ...(d.options || {}) };
       const figer = (f) => (f.lignes || []).every(l => !l.produitRef || l.prixHT !== undefined) ? f : { ...f, lignes: figerLignes(f, d) };
       out.factures = (d.factures || []).map(figer);
       out.facturesSupprimes = (d.facturesSupprimes || []).map(figer);
@@ -1029,7 +1128,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const updateData = (updates) => setData(prev => ({ ...prev, ...updates }));
 
       const getNextProduitRef = () => {
-        const nums = data.produits.map(p => parseInt(p.reference.replace('P', '')) || 0);
+        // Jamais une référence déjà utilisée, même par un produit de la corbeille
+        const nums = [...data.produits, ...(data.produitsSupprimes || [])].map(p => parseInt(String(p.reference).replace('P', '')) || 0).filter(n => n < 9999);
         return `P${String(Math.max(0, ...nums) + 1).padStart(4, '0')}`;
       };
 
@@ -1482,11 +1582,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const exportExcel = () => {
         const wb = XLSX.utils.book_new();
-        const prodHeaders = ['Référence', 'Cuvée', 'Millésime', 'Contenance', 'Variante', 'Prix HT'];
-        const prodRows = data.produits.map(p => [p.reference, p.cuvee, p.millesime, p.contenance, p.variante || '', p.prixHT]);
+        const prodHeaders = ['Référence', 'Cuvée', 'Millésime', 'Contenance', 'Prix pro HT', 'Prix export HT', 'Prix particulier', 'Particulier saisi', 'Épuisé'];
+        const prodRows = data.produits.map(p => { const px = prixProduit(p); return [p.reference, p.cuvee, p.millesime, p.contenance, px.pro ?? '', px.export ?? '', px.particulier ?? '', p.particulierTTC ? 'TTC' : 'HT', p.epuise ? 'oui' : '']; });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([prodHeaders, ...prodRows]), 'Produits');
-        const clientHeaders = ['Numéro', 'Type', 'Raison sociale / Nom', 'Enseigne', 'SIREN', 'Adresse', 'CP', 'Ville', 'Pays', 'Tél', 'Email'];
-        const clientRows = data.clients.map(c => [c.numero, c.type, c.nom, c.enseigne || '', c.siren || '', c.adresse, c.codePostal, c.ville, c.pays, c.telephone || c.portable, c.email]);
+        const clientHeaders = ['Numéro', 'Type', 'Raison sociale / Nom', 'Enseigne', 'SIREN', 'N° TVA', 'Vérifié VIES', 'Adresse', 'CP', 'Ville', 'Pays', 'Tél', 'Email'];
+        const clientRows = data.clients.map(c => { const v = viesAJour(c); return [c.numero, c.type, c.nom, c.enseigne || '', c.siren || '', c.tvaIntra || '', v ? `${v.valide ? 'valide' : 'invalide'} le ${dateFr(v.date)}${v.consultation ? ' (' + v.consultation + ')' : ''}` : '', c.adresse, c.codePostal, c.ville, c.pays, c.telephone || c.portable, c.email]; });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([clientHeaders, ...clientRows]), 'Clients');
         const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement'];
         const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, f.statut, f.echeance, f.datePaiement]);
@@ -1767,16 +1867,29 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const addLigne = () => setForm(prev => ({ ...prev, lignes: [...prev.lignes, { produitRef: '', quantite: 1 }] }));
       const removeLigne = (i) => setForm(prev => ({ ...prev, lignes: prev.lignes.filter((_, idx) => idx !== i) }));
+      const clientForm = (f) => data.clients.find(c => c.numero === f.clientId);
+      // Prix et libellé figés au moment du choix du produit, au tarif du client
+      const ligneTarifee = (l, ref, f) => {
+        const p = data.produits.find(x => x.reference === ref);
+        if (!p) return { produitRef: '', quantite: l.quantite };
+        return { produitRef: ref, quantite: l.quantite, ...tarifer(p, clientForm(f), f.tauxTVA), libelle: libelleProduit(p, (data.categorieDouanes || {})[p.cuvee]), contenance: p.contenance, ...(l.offerte ? { offerte: true } : {}) };
+      };
       const updateLigne = (i, field, value) => setForm(prev => ({ ...prev, lignes: prev.lignes.map((l, idx) => {
         if (idx !== i) return l;
         if (field === 'produitRef') {
           if (value === REF_EXCEPTIONNEL) return { produitRef: value, quantite: l.quantite, prixHT: '', libelle: '', contenance: '' };
-          // Le prix et le libellé sont figés au moment du choix du produit
-          const p = data.produits.find(x => x.reference === value);
-          return p ? { produitRef: value, quantite: l.quantite, prixHT: parseFloat(p.prixHT).toFixed(2), libelle: libelleProduit(p), contenance: p.contenance } : { produitRef: '', quantite: l.quantite };
+          return ligneTarifee(l, value, prev);
         }
+        if (field === 'prixHT' && !estExceptionnel(l)) { const { ttc, repli, ...rest } = l; return { ...rest, prixHT: value, prixManuel: true }; }
         return { ...l, [field]: value };
       }) }));
+      // Changer de client remet les lignes au tarif de ce client (sauf prix saisis à la main)
+      const changerClient = (numero) => setForm(prev => {
+        const f = { ...prev, clientId: numero };
+        return { ...f, lignes: prev.lignes.map(l => (!l.produitRef || estExceptionnel(l) || l.prixManuel || !data.produits.some(x => x.reference === l.produitRef)) ? l : ligneTarifee(l, l.produitRef, f)) };
+      });
+      // Un prix particulier saisi TTC se recalcule HT avec le taux de TVA de la facture
+      const changerTaux = (taux) => setForm(prev => ({ ...prev, tauxTVA: taux, lignes: prev.lignes.map(l => l.ttc !== undefined && !l.prixManuel ? { ...l, prixHT: horsTaxe(l.ttc, taux) } : l) }));
 
       const calculs = () => {
         const t = totauxFacture(form, data);
@@ -1892,11 +2005,14 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                   <ClientCombobox
                     clients={data.clients.filter(c => c.nom)}
                     value={form.clientId}
-                    onChange={(numero) => setForm({...form, clientId: numero})}
+                    onChange={changerClient}
                     hasError={!!errors.clientId}
                   />
                   {(() => { const c = data.clients.find(x => x.numero === form.clientId); return c && typeClient(c) === 'pro' && estFrance(c) && !sirenValide(c.siren)
-                    ? <div className="alerte-info">SIREN manquant pour ce client : à compléter dans sa fiche (onglet Clients) pour pouvoir produire la facture électronique.</div> : null; })()}
+                    ? <div className="alerte-info">SIREN manquant pour ce client : à compléter dans sa fiche (onglet Clients) pour pouvoir produire la facture électronique.</div>
+                    : c && clientUE(c) ? (!tvaNormalisee(c) ? <div className="alerte-info">N° de TVA manquant pour ce client de l'Union européenne : sans lui, la vente ne peut pas être faite sans TVA.</div>
+                      : !viesAJour(c) ? <div className="alerte-info">N° de TVA de ce client pas encore vérifié dans VIES : vérifiez-le depuis sa fiche (onglet Clients).</div>
+                      : !viesAJour(c).valide ? <div className="alerte-info">N° de TVA de ce client inconnu de VIES (vérifié le {dateFr(viesAJour(c).date)}) : à corriger avant de facturer sans TVA.</div> : null) : null; })()}
                 </div>
                 <div className="form-group"><label>Date</label><input type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></div>
                 <div className="form-group"><label>Échéance</label><input type="date" value={form.echeance} onChange={e => setForm({...form, echeance: e.target.value})} /></div>
@@ -1921,26 +2037,43 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             </div>
             <div className="card">
               <div className="card-title">Produits {errors.lignes && <span className="error-msg">({errors.lignes})</span>}</div>
+              <div className="ligne-entete"><span>Produit</span><span>Qté</span><span>Prix unit. HT</span><span>Montant HT</span><span></span></div>
               {form.lignes.map((l, i) => {
                 const exceptionnel = estExceptionnel(l);
-                const horsCatalogue = l.produitRef && !exceptionnel && !data.produits.some(x => x.reference === l.produitRef);
-                const prixCatalogue = data.produits.find(x => x.reference === l.produitRef)?.prixHT;
-                const prixChange = l.prixHT !== undefined && prixCatalogue !== undefined && parseFloat(prixCatalogue) !== parseFloat(l.prixHT);
+                const produit = data.produits.find(x => x.reference === l.produitRef);
+                const horsCatalogue = l.produitRef && !exceptionnel && !produit;
+                const client = clientForm(form);
+                const libTarif = { pro: 'Tarif pro', export: 'Tarif export', particulier: 'Tarif particulier' };
+                const nomType = { export: 'export', particulier: 'particulier' };
+                const prixLigne = lignesFacture({ lignes: [l] }, data)[0];
                 return (
                   <div className="ligne-produit" key={i}>
                     <select value={l.produitRef} onChange={e => updateLigne(i, 'produitRef', e.target.value)}>
                       <option value="">-- Produit --</option>
-                      {horsCatalogue && <option value={l.produitRef}>{l.produitRef} - {l.libelle} ({l.prixHT}€, hors catalogue)</option>}
-                      {data.produits.filter(p => p.reference !== REF_EXCEPTIONNEL).map(p => <option key={p.reference} value={p.reference}>{p.reference} - {p.cuvee} {p.millesime} {p.contenance} ({p.prixHT}€)</option>)}
+                      {horsCatalogue && <option value={l.produitRef}>{l.produitRef} - {l.libelle} (hors catalogue)</option>}
+                      {produit && produit.epuise && <option value={produit.reference}>{produit.reference} - {produit.cuvee} {produit.millesime} {produit.contenance} (épuisé)</option>}
+                      {data.produits.filter(p => p.reference !== REF_EXCEPTIONNEL && !p.epuise).map(p => <option key={p.reference} value={p.reference}>{p.reference} - {p.cuvee} {p.millesime} {p.contenance} ({tarifer(p, client, form.tauxTVA).prixHT.replace(/(\.\d\d)\d+$/, '$1')} € HT)</option>)}
                       <option value={REF_EXCEPTIONNEL}>{REF_EXCEPTIONNEL} - Produit exceptionnel (intitulé et prix à saisir)</option>
                     </select>
                     <input type="number" min="1" value={l.quantite} onChange={e => updateLigne(i, 'quantite', parseInt(e.target.value) || 1)} />
-                    <span style={{fontSize: 13, textAlign: 'right'}} title={prixChange ? `Prix figé à ${l.prixHT} € (catalogue actuel : ${prixCatalogue} €)` : ''}>{l.prixHT !== undefined ? `${round2(parseFloat(l.prixHT) * l.quantite).toFixed(2)} €${prixChange ? ' *' : ''}` : ''}</span>
+                    <input type="number" min="0" step="0.01" className="prix-ligne" value={l.prixHT ?? ''} disabled={!l.produitRef || l.offerte} placeholder={exceptionnel ? 'Prix HT' : ''}
+                      onChange={e => updateLigne(i, 'prixHT', e.target.value)} />
+                    <span style={{fontSize: 13, textAlign: 'right'}}>{l.produitRef && prixLigne ? `${prixLigne.montantHT.toFixed(2)} €` : ''}</span>
                     <button className="btn btn-icon btn-ghost delete" onClick={() => removeLigne(i)}>{Icons.trash}</button>
                     {exceptionnel && (
                       <div className="ligne-exceptionnelle">
                         <input value={l.libelle || ''} placeholder="Intitulé (ex. : verres gravés, location de tireuse…)" onChange={e => updateLigne(i, 'libelle', e.target.value)} />
-                        <input type="number" min="0" step="0.01" value={l.prixHT} placeholder="Prix HT unitaire" onChange={e => updateLigne(i, 'prixHT', e.target.value)} />
+                      </div>
+                    )}
+                    {l.produitRef && !exceptionnel && (
+                      <div className="ligne-info">
+                        <span className={l.repli ? 'repli' : ''}>
+                          {l.offerte ? 'Bouteilles offertes : 0 € sur la facture, comptées en bouteilles et en douane'
+                            : l.prixManuel ? 'Prix modifié à la main'
+                            : l.repli ? `Pas de tarif ${nomType[l.repli]} pour ce produit : prix pro appliqué`
+                            : l.tarif ? <>{libTarif[l.tarif]}{l.ttc !== undefined && <> ({Number(l.ttc).toFixed(2)} € TTC)</>}</> : ''}
+                        </span>
+                        <label><input type="checkbox" checked={!!l.offerte} onChange={e => updateLigne(i, 'offerte', e.target.checked)} /> Offerte</label>
                       </div>
                     )}
                   </div>
@@ -1953,7 +2086,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <div className="form-grid">
                 <div className={`form-group required ${errors.tauxTVA ? 'error' : ''}`}>
                   <label>Taux TVA</label>
-                  <select value={form.tauxTVA} onChange={e => setForm({...form, tauxTVA: e.target.value})} className={errors.tauxTVA ? 'error' : ''}>
+                  <select value={form.tauxTVA} onChange={e => changerTaux(e.target.value)} className={errors.tauxTVA ? 'error' : ''}>
                     <option value="">-- Choisir --</option>
                     <option value="20">20 %</option>
                     <option value="10">10 %</option>
@@ -2116,20 +2249,23 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const [isNouvelleCuvee, setIsNouvelleCuvee] = useState(false);
       const [sortCol, setSortCol] = useState('reference');
       const [sortDir, setSortDir] = useState('asc');
+      const [voirEpuises, setVoirEpuises] = useState(false);
 
       const produits = tab === 'actifs' ? data.produits : data.produitsSupprimes;
+      const nbEpuises = data.produits.filter(p => p.epuise).length;
+      const valTri = (p) => ['pro', 'export', 'particulier'].includes(sortCol) ? (prixProduit(p)[sortCol] ?? -1) : String(p[sortCol] || '').toLowerCase();
       let filtered = produits.filter(p => {
         const s = search.toLowerCase();
-        return p.reference.toLowerCase().includes(s) || p.cuvee.toLowerCase().includes(s) || p.millesime.includes(s);
+        return (tab !== 'actifs' || voirEpuises || !p.epuise) && (p.reference.toLowerCase().includes(s) || p.cuvee.toLowerCase().includes(s) || String(p.millesime || '').includes(s));
       });
       filtered = [...filtered].sort((a, b) => {
-        let valA = sortCol === 'prixHT' ? parseFloat(a[sortCol]) : a[sortCol] || '';
-        let valB = sortCol === 'prixHT' ? parseFloat(b[sortCol]) : b[sortCol] || '';
-        if (typeof valA === 'string') { valA = valA.toLowerCase(); valB = valB.toLowerCase(); }
+        const valA = valTri(a), valB = valTri(b);
         if (valA < valB) return sortDir === 'asc' ? -1 : 1;
         if (valA > valB) return sortDir === 'asc' ? 1 : -1;
         return 0;
       });
+      const sansExport = data.produits.filter(p => !p.epuise && prixProduit(p).export === null).length;
+      const sansParticulier = data.produits.filter(p => !p.epuise && prixProduit(p).particulier === null).length;
       const handleSort = (col) => { if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortCol(col); setSortDir('asc'); } };
       const openAdd = () => {
         setEditIndex(null);
@@ -2140,35 +2276,48 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           cuvee: defaultCuvee,
           millesime: new Date().getFullYear().toString(),
           contenance: '75cl',
-          prixHT: '',
-          variante: '',
+          prix: { pro: '', export: '', particulier: '' },
+          particulierTTC: (data.options || {}).particulierTTC !== false,
           categorieDouanes: (data.categorieDouanes || {})[defaultCuvee] || ''
         });
       };
+      // Nouveau millésime ou autre contenance d'une bouteille existante : mêmes cuvée et tarifs, nouvelle référence
+      const dupliquer = (p) => {
+        setEditIndex(null);
+        setIsNouvelleCuvee(!data.cuvees.includes(p.cuvee));
+        const { epuise, deletedAt, variante, descriptionOriginale, ...base } = migrerProduit(p);
+        setModal({ ...base, reference: getNextRef(), prix: { ...base.prix }, categorieDouanes: (data.categorieDouanes || {})[p.cuvee] || '' });
+      };
       const openEdit = (index) => {
-        const p = produits[index];
+        const p = migrerProduit(produits[index]);
         setEditIndex(index);
         setIsNouvelleCuvee(!data.cuvees.includes(p.cuvee));
-        setModal({ ...p, categorieDouanes: (data.categorieDouanes || {})[p.cuvee] || '' });
+        setModal({ ...p, prix: { ...p.prix }, categorieDouanes: (data.categorieDouanes || {})[p.cuvee] || '' });
       };
       const onCuveeChange = (newCuvee) => {
         // Sélection d'une cuvée existante → précharge sa catégorie
         setModal({ ...modal, cuvee: newCuvee, categorieDouanes: (data.categorieDouanes || {})[newCuvee] || '' });
       };
+      const setPrix = (cle, v) => setModal(m => ({ ...m, prix: { ...m.prix, [cle]: v } }));
       const save = () => {
         if (!modal.cuvee || !modal.cuvee.trim()) { showToast('Cuvée requise'); return; }
         if (!modal.categorieDouanes) { showToast('Catégorie douanes requise'); return; }
-        const { categorieDouanes, ...produit } = modal;
-        const updates = {};
-        if (isNouvelleCuvee && modal.cuvee && !data.cuvees.includes(modal.cuvee)) {
-          updates.cuvees = [...data.cuvees, modal.cuvee];
-        }
-        // Mettre à jour la catégorie de la cuvée (s'applique à tous les produits de cette cuvée)
-        updates.categorieDouanes = { ...(data.categorieDouanes || {}), [modal.cuvee]: categorieDouanes };
+        const px = prixProduit(modal);
+        if (px.pro === null || px.pro < 0) { showToast('Prix pro requis'); return; }
+        if ((px.export !== null && px.export < 0) || (px.particulier !== null && px.particulier < 0)) { showToast('Prix négatif'); return; }
+        const { categorieDouanes, ...rest } = modal;
+        const cuvee = modal.cuvee.trim();
+        const fmt = (v) => v === null ? '' : v.toFixed(2);
+        // prixHT reste le prix pro : les anciennes versions du Facturier le lisent encore
+        const produit = { ...rest, cuvee, prix: { pro: fmt(px.pro), export: fmt(px.export), particulier: fmt(px.particulier) }, prixHT: fmt(px.pro) };
+        const updates = { options: { ...(data.options || {}), particulierTTC: !!modal.particulierTTC } };
+        if (!data.cuvees.includes(cuvee)) updates.cuvees = [...data.cuvees, cuvee];
+        // La catégorie s'applique à toute la cuvée
+        updates.categorieDouanes = { ...(data.categorieDouanes || {}), [cuvee]: categorieDouanes };
         if (editIndex !== null) {
           const updated = [...produits];
           updated[editIndex] = produit;
-          updates.produits = updated;
+          updates[tab === 'actifs' ? 'produits' : 'produitsSupprimes'] = updated;
           updateData(updates);
           showToast('Produit modifié');
         } else {
@@ -2178,29 +2327,48 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         }
         setModal(null);
       };
+      const basculerEpuise = (p) => { updateData({ produits: data.produits.map(x => x === p ? { ...x, epuise: !x.epuise } : x) }); showToast(p.epuise ? 'Produit de nouveau en vente' : 'Produit marqué épuisé : il ne sera plus proposé dans les factures'); };
       const deleteProduit = () => { const p = data.produits[confirmDelete]; updateData({ produits: data.produits.filter((_, i) => i !== confirmDelete), produitsSupprimes: [...data.produitsSupprimes, { ...p, deletedAt: new Date().toISOString() }] }); showToast('Produit supprimé'); setConfirmDelete(null); };
       const restoreProduit = (index) => { const p = data.produitsSupprimes[index]; const { deletedAt, ...rest } = p; updateData({ produitsSupprimes: data.produitsSupprimes.filter((_, i) => i !== index), produits: [...data.produits, rest] }); showToast('Produit restauré'); };
-      const SortHeader = ({ col, children }) => <th className={`sortable ${sortCol === col ? sortDir : ''}`} onClick={() => handleSort(col)}>{children}</th>;
+      const SortHeader = ({ col, children, droite }) => <th className={`sortable ${sortCol === col ? sortDir : ''}`} style={droite ? {textAlign: 'right'} : null} onClick={() => handleSort(col)}>{children}</th>;
+      const cellPrix = (p, cle) => { const t = texteTarif(p, cle); return <td style={{textAlign: 'right', whiteSpace: 'nowrap'}}>{t || <span style={{color: 'var(--text-muted)'}} title="Non renseigné : le prix pro s'applique">—</span>}</td>; };
+      const ttc = !!(modal && modal.particulierTTC);
+      const tauxRef = 20;
+      const apercuParticulier = modal && nombre(modal.prix.particulier) !== null
+        ? (ttc ? `soit ${(nombre(modal.prix.particulier) / (1 + tauxRef / 100)).toFixed(2)} € HT à 20 %` : `soit ${(nombre(modal.prix.particulier) * (1 + tauxRef / 100)).toFixed(2)} € TTC à 20 %`) : 'Vide : le prix pro s\'applique';
 
       return (
         <div>
           <div className="page-header"><h1 className="page-title">Produits</h1><button className="btn btn-primary" onClick={openAdd}>{Icons.plus} Nouveau</button></div>
           <div className="tabs">
-            <button className={`tab ${tab === 'actifs' ? 'active' : ''}`} onClick={() => setTab('actifs')}>Actifs ({data.produits.length})</button>
+            <button className={`tab ${tab === 'actifs' ? 'active' : ''}`} onClick={() => setTab('actifs')}>En vente ({data.produits.length - nbEpuises})</button>
             <button className={`tab ${tab === 'corbeille' ? 'active' : ''}`} onClick={() => setTab('corbeille')}>Corbeille ({data.produitsSupprimes.length})</button>
           </div>
-          <div className="search-bar"><input placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <div className="search-bar"><input placeholder="Rechercher une cuvée, un millésime, une référence…" value={search} onChange={e => setSearch(e.target.value)} /></div>
+          {tab === 'actifs' && (
+            <div style={{display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', margin: '-4px 0 14px', fontSize: 13}}>
+              {nbEpuises > 0 && <label style={{display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer'}}><input type="checkbox" checked={voirEpuises} onChange={e => setVoirEpuises(e.target.checked)} /> Afficher les produits épuisés ({nbEpuises})</label>}
+              {(sansExport > 0 || sansParticulier > 0) && <span style={{color: 'var(--text-muted)'}}>Sans tarif {[sansExport && `export : ${sansExport}`, sansParticulier && `particulier : ${sansParticulier}`].filter(Boolean).join(', ')} — le prix pro s'applique.</span>}
+            </div>
+          )}
           <div className="card" style={{padding: 0, overflow: 'hidden'}}>
             <table>
-              <thead><tr><SortHeader col="reference">Réf.</SortHeader><SortHeader col="cuvee">Cuvée</SortHeader><SortHeader col="millesime">Mill.</SortHeader><SortHeader col="contenance">Cont.</SortHeader><SortHeader col="prixHT">Prix HT</SortHeader><th style={{width: 100}}>Actions</th></tr></thead>
+              <thead><tr><SortHeader col="reference">Réf.</SortHeader><SortHeader col="cuvee">Cuvée</SortHeader><SortHeader col="millesime">Mill.</SortHeader><SortHeader col="contenance">Cont.</SortHeader>
+                <SortHeader col="pro" droite>Pro</SortHeader><SortHeader col="export" droite>Export</SortHeader><SortHeader col="particulier" droite>Particulier</SortHeader><th style={{width: 130}}>Actions</th></tr></thead>
               <tbody>
-                {filtered.length === 0 ? <tr><td colSpan="6" style={{textAlign: 'center', padding: 40}}>Aucun produit</td></tr> : filtered.map((p, i) => (
-                  <tr key={p.reference + i}>
+                {filtered.length === 0 ? <tr><td colSpan="8" style={{textAlign: 'center', padding: 40}}>Aucun produit</td></tr> : filtered.map((p, i) => (
+                  <tr key={p.reference + i} className={p.epuise ? 'produit-epuise' : ''}>
                     <td className="ref-code">{p.reference}</td>
-                    <td>{p.cuvee} {p.variante && <span style={{color: 'var(--text-muted)'}}>({p.variante})</span>}</td>
-                    <td>{p.millesime}</td><td>{p.contenance}</td><td>{parseFloat(p.prixHT).toFixed(2)} €</td>
+                    <td>{p.cuvee}{p.epuise && <span className="badge-epuise">épuisé</span>}</td>
+                    <td>{p.millesime}</td><td>{p.contenance}</td>
+                    {cellPrix(p, 'pro')}{cellPrix(p, 'export')}{cellPrix(p, 'particulier')}
                     <td><div className="actions-cell">
-                      {tab === 'actifs' ? <><button className="btn btn-icon btn-ghost edit" onClick={() => openEdit(data.produits.indexOf(p))}>{Icons.edit}</button><button className="btn btn-icon btn-ghost delete" onClick={() => setConfirmDelete(data.produits.indexOf(p))}>{Icons.trash}</button></> : <button className="btn btn-icon btn-ghost restore" onClick={() => restoreProduit(data.produitsSupprimes.indexOf(p))}>{Icons.restore}</button>}
+                      {tab === 'actifs' ? <>
+                        <button className="btn btn-icon btn-ghost edit" title="Modifier" onClick={() => openEdit(data.produits.indexOf(p))}>{Icons.edit}</button>
+                        <button className="btn btn-icon btn-ghost" title="Nouveau millésime ou autre contenance (copie de ce produit)" onClick={() => dupliquer(p)}>{Icons.plus}</button>
+                        <button className="btn btn-icon btn-ghost" title={p.epuise ? 'Remettre en vente' : 'Marquer épuisé (n\'est plus proposé dans les factures)'} onClick={() => basculerEpuise(p)}>{p.epuise ? '↺' : '⦸'}</button>
+                        <button className="btn btn-icon btn-ghost delete" title="Mettre à la corbeille" onClick={() => setConfirmDelete(data.produits.indexOf(p))}>{Icons.trash}</button>
+                      </> : <button className="btn btn-icon btn-ghost restore" onClick={() => restoreProduit(data.produitsSupprimes.indexOf(p))}>{Icons.restore}</button>}
                     </div></td>
                   </tr>
                 ))}
@@ -2213,31 +2381,44 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 <div className="modal-header"><div className="modal-title">{editIndex !== null ? 'Modifier' : 'Nouveau'} produit</div><button className="close-btn" onClick={() => setModal(null)}>×</button></div>
                 <div className="form-grid">
                   <div className="form-group"><label>Référence</label><input value={modal.reference} disabled /></div>
-                  <div className="form-group"><label>Prix HT (€)</label><input type="number" step="0.01" value={modal.prixHT} onChange={e => setModal({...modal, prixHT: e.target.value})} /></div>
-                  <div className="form-group full">
-                    <label style={{display: 'flex', alignItems: 'center', gap: 8}}><input type="checkbox" checked={isNouvelleCuvee} onChange={e => { setIsNouvelleCuvee(e.target.checked); if (!e.target.checked) onCuveeChange(data.cuvees[0] || ''); else setModal({...modal, cuvee: '', categorieDouanes: ''}); }} /> Nouvelle cuvée</label>
-                    {isNouvelleCuvee ? <input placeholder="Nom" value={modal.cuvee} onChange={e => setModal({...modal, cuvee: e.target.value})} style={{marginTop: 8}} /> : <select value={modal.cuvee} onChange={e => onCuveeChange(e.target.value)} style={{marginTop: 8}}>{data.cuvees.map(c => <option key={c} value={c}>{c}</option>)}</select>}
-                  </div>
                   <div className="form-group required">
-                    <label>Catégorie douanes</label>
+                    <label>Catégorie douanes de la cuvée</label>
                     <select value={modal.categorieDouanes || ''} onChange={e => setModal({...modal, categorieDouanes: e.target.value})} className={!modal.categorieDouanes ? 'select-empty' : ''}>
                       <option value="">— Choisir —</option>
                       {CATEGORIES_DOUANES.map(cat => <option key={cat.key} value={cat.key}>{cat.label}</option>)}
                     </select>
                   </div>
-                  <div className="form-group"><label>Millésime</label><input value={modal.millesime} onChange={e => setModal({...modal, millesime: e.target.value})} /></div>
+                  <div className="form-group full">
+                    <label style={{display: 'flex', alignItems: 'center', gap: 8}}><input type="checkbox" checked={isNouvelleCuvee} onChange={e => { setIsNouvelleCuvee(e.target.checked); if (!e.target.checked) onCuveeChange(data.cuvees[0] || ''); else setModal({...modal, cuvee: '', categorieDouanes: ''}); }} /> Nouvelle cuvée</label>
+                    {isNouvelleCuvee ? <input placeholder="Nom de la cuvée, sans millésime ni type de client" value={modal.cuvee} onChange={e => setModal({...modal, cuvee: e.target.value})} style={{marginTop: 8}} /> : <select value={modal.cuvee} onChange={e => onCuveeChange(e.target.value)} style={{marginTop: 8}}>{data.cuvees.map(c => <option key={c} value={c}>{c}</option>)}</select>}
+                  </div>
+                  <div className="form-group"><label>Millésime</label><input value={modal.millesime} placeholder="2025, ou 2023/2024 pour un assemblage" onChange={e => setModal({...modal, millesime: e.target.value})} /></div>
                   <div className="form-group"><label>Contenance</label>
                     <select value={modal.contenance} onChange={e => setModal({...modal, contenance: e.target.value})}>
                       <option value="37.5cl">37.5cl</option><option value="50cl">50cl</option><option value="75cl">75cl</option><option value="1L">1L</option><option value="150cl">150cl (Magnum)</option><option value="3L">3L (Jéroboam)</option>
                     </select>
                   </div>
-                  <div className="form-group"><label>Variante</label><input placeholder="export, offert..." value={modal.variante || ''} onChange={e => setModal({...modal, variante: e.target.value})} /></div>
+                  <div className="tarifs-grille">
+                    <div className="form-group required" style={{margin: 0}}><label>Prix pro (€ HT)</label>
+                      <input type="number" min="0" step="0.01" value={modal.prix.pro} onChange={e => setPrix('pro', e.target.value)} />
+                      <div className="aide">Clients professionnels en France</div></div>
+                    <div className="form-group" style={{margin: 0}}><label>Prix export (€ HT)</label>
+                      <input type="number" min="0" step="0.01" value={modal.prix.export} onChange={e => setPrix('export', e.target.value)} />
+                      <div className="aide">{nombre(modal.prix.export) === null ? 'Vide : le prix pro s\'applique' : 'Clients export (UE et hors UE)'}</div></div>
+                    <div className="form-group" style={{margin: 0}}><label>Prix particulier
+                        <span className="bascule-ttc"><button type="button" className={ttc ? 'actif' : ''} onClick={() => setModal(m => ({...m, particulierTTC: true}))}>TTC</button><button type="button" className={!ttc ? 'actif' : ''} onClick={() => setModal(m => ({...m, particulierTTC: false}))}>HT</button></span></label>
+                      <input type="number" min="0" step="0.01" value={modal.prix.particulier} onChange={e => setPrix('particulier', e.target.value)} />
+                      <div className="aide">{apercuParticulier}</div></div>
+                  </div>
+                  {editIndex !== null && tab === 'actifs' && (
+                    <div className="form-group full"><label style={{display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer'}}><input type="checkbox" checked={!!modal.epuise} onChange={e => setModal({...modal, epuise: e.target.checked})} /> Épuisé : ne plus le proposer dans les factures (il reste dans l'historique)</label></div>
+                  )}
                 </div>
                 <div className="btn-group"><button className="btn btn-primary" onClick={save}>Enregistrer</button><button className="btn btn-outline" onClick={() => setModal(null)}>Annuler</button></div>
               </div>
             </div>
           )}
-          {confirmDelete !== null && <ConfirmModal title="Supprimer ?" message="Le produit sera déplacé vers la corbeille." onConfirm={deleteProduit} onCancel={() => setConfirmDelete(null)} />}
+          {confirmDelete !== null && <ConfirmModal title="Supprimer ?" message="Le produit sera déplacé vers la corbeille. S'il est simplement épuisé, préférez « Marquer épuisé »." onConfirm={deleteProduit} onCancel={() => setConfirmDelete(null)} />}
         </div>
       );
     }
@@ -2478,6 +2659,48 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       </>);
     }
 
+    // Vérification d'un n° de TVA intracommunautaire dans VIES (registre de la Commission européenne)
+    function VerifVies({ client, demandeur, onResultat, onReprendre }) {
+      const [charge, setCharge] = useState(false);
+      const [erreur, setErreur] = useState('');
+      const [note, setNote] = useState('');
+      const num = tvaNormalisee(client);
+      const v = viesAJour(client);
+      const verifier = async () => {
+        setCharge(true); setErreur(''); setNote('');
+        try {
+          const { vies, demandeurRefuse } = await verifierVies(num, demandeur);
+          onResultat(vies);
+          if (demandeurRefuse) setNote("Vérifié sans n° de consultation : votre propre n° de TVA (Paramètres) n'est pas reconnu par VIES.");
+          else if (!demandeur) setNote("Sans votre n° de TVA dans Paramètres, VIES ne délivre pas de n° de consultation (la preuve de vérification).");
+        } catch (e) { setErreur(e.message); }
+        setCharge(false);
+      };
+      if (!num) return <div className="vies vies-neutre">Pas encore de n° de TVA : il est indispensable pour vendre sans TVA à un professionnel de l'Union européenne. Demandez-le au client.</div>;
+      const bouton = RELAIS
+        ? <button type="button" className="lien" onClick={verifier} disabled={charge}>{charge ? 'Vérification…' : (v ? 'Revérifier' : 'Vérifier dans VIES')}</button>
+        : <a className="lien" href="https://ec.europa.eu/taxation_customs/vies/#/vat-validation" target="_blank" rel="noreferrer">Vérifier sur le site VIES</a>;
+      return (<>
+        {!v && <div className="vies vies-neutre">N° {num} pas encore vérifié. <div className="vies-actions">{bouton}</div></div>}
+        {v && v.valide && (
+          <div className="vies vies-ok">
+            <strong>✓ N° valide</strong> selon VIES, vérifié le {dateFr(v.date)}{v.consultation && <> — n° de consultation <strong>{v.consultation}</strong></>}
+            {(v.nom || v.adresse) ? <div>Enregistré au nom de : {v.nom || '(nom non communiqué)'}{v.adresse && <>, {v.adresse.replace(/\n/g, ', ')}</>}</div>
+              : <div>Ce pays ne communique ni le nom ni l'adresse : vérifiez qu'ils correspondent bien à votre client.</div>}
+            <div className="vies-actions">{v.nom && onReprendre && <button type="button" className="lien" onClick={() => onReprendre(v)}>Reprendre ce nom et cette adresse</button>}{bouton}</div>
+          </div>
+        )}
+        {v && !v.valide && (
+          <div className="vies vies-ko">
+            <strong>✗ N° inconnu de VIES</strong> le {dateFr(v.date)}. Vérifiez-le auprès du client : un n° valide est une condition de la vente sans TVA dans l'Union européenne.
+            <div className="vies-actions">{bouton}</div>
+          </div>
+        )}
+        {note && <div className="vies vies-neutre">{note}</div>}
+        {erreur && <div className="vies vies-ko">{erreur}</div>}
+      </>);
+    }
+
     // Page Clients
     function PageClients({ data, updateData, getNextNum, showToast }) {
       const [tab, setTab] = useState('actifs');
@@ -2490,8 +2713,31 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const [sortDir, setSortDir] = useState('asc');
       const [sansSiren, setSansSiren] = useState(false);
       const [etabs, setEtabs] = useState([]);
+      const [verifTous, setVerifTous] = useState(null);
 
       const clients = tab === 'actifs' ? data.clients : data.clientsSupprimes;
+      const clientsUE = data.clients.filter(c => c.nom && clientUE(c));
+      const lancerVerifTous = async () => {
+        const maj = [...data.clients];
+        const resultats = [];
+        setVerifTous({ enCours: true, total: clientsUE.length, resultats: [] });
+        for (const c of clientsUE) {
+          const num = tvaNormalisee(c);
+          if (!num) resultats.push({ c, statut: 'manquant' });
+          else {
+            try {
+              const { vies } = await verifierVies(num, data.entreprise.tvaIntra);
+              const i = maj.findIndex(x => x.numero === c.numero);
+              maj[i] = { ...maj[i], tvaIntra: num, vies };
+              resultats.push({ c, statut: vies.valide ? 'valide' : 'invalide', vies });
+            } catch (e) { resultats.push({ c, statut: 'erreur', texte: e.message }); }
+            await new Promise(r => setTimeout(r, 700));
+          }
+          setVerifTous(v => ({ ...v, resultats: [...resultats] }));
+        }
+        updateData({ clients: maj });
+        setVerifTous(v => ({ ...v, enCours: false }));
+      };
       const manqueSiren = (c) => typeClient(c) === 'pro' && estFrance(c) && !sirenValide(c.siren);
       const nbSansSiren = data.clients.filter(c => c.nom && manqueSiren(c)).length;
       let filtered = clients.filter(c => c.nom && (c.nom.toLowerCase().includes(search.toLowerCase()) || (c.enseigne || '').toLowerCase().includes(search.toLowerCase()) || c.numero.toLowerCase().includes(search.toLowerCase()) || (c.siren || '').includes(search)) && (!sansSiren || manqueSiren(c)));
@@ -2499,7 +2745,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       filtered = [...filtered].sort((a, b) => { let valA = valTri(a); let valB = valTri(b); if (valA < valB) return sortDir === 'asc' ? -1 : 1; if (valA > valB) return sortDir === 'asc' ? 1 : -1; return 0; });
       const handleSort = (col) => { if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortCol(col); setSortDir('asc'); } };
       const getTypeBadge = (type) => { const t = (type || '').toLowerCase(); if (t.includes('export')) return <span className="badge badge-export">Export</span>; if (t.includes('pro')) return <span className="badge badge-pro">Pro</span>; return <span className="badge badge-particulier">Particulier</span>; };
-      const openAdd = () => { setEtabs([]); setEditIndex(null); setManualAddress(false); setModal({ numero: getNextNum(), type: 'pro', nom: '', adresse: '', codePostal: '', ville: '', pays: 'France', telephone: '', portable: '', email: '', remarques: '' }); };
+      const openAdd = () => { setEtabs([]); setEditIndex(null); setManualAddress(false); setModal({ numero: getNextNum(), type: 'Pro', nom: '', adresse: '', codePostal: '', ville: '', pays: 'France', telephone: '', portable: '', email: '', remarques: '' }); };
       const openEdit = (index) => { setEtabs([]); setEditIndex(index); setManualAddress(true); setModal({ ...clients[index] }); };
       const save = () => {
         const siren = chiffres(modal.siren);
@@ -2509,7 +2755,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const { _cle, _cleL, _ancienneGardee, ...rest } = modal;
         const livraison = modal.livraison && modal.livraison.adresse ? modal.livraison : null;
         const enseigne = particulier ? '' : (String(modal.enseigne || '').trim() || modal.nom);
-        const client = { ...rest, siren, enseigne, livraison, tvaIntra: (modal.tvaIntra || '').replace(/\s/g, '').toUpperCase() };
+        const client = { ...rest, siren, enseigne, livraison, tvaIntra: estFrance(modal) ? (modal.tvaIntra || '').replace(/\s/g, '').toUpperCase() : tvaNormalisee(modal) };
         if (editIndex !== null) { const updated = [...clients]; updated[editIndex] = client; updateData({ clients: updated }); showToast('Client modifié'); } else { updateData({ clients: [...data.clients, client] }); showToast('Client ajouté'); } setModal(null);
       };
       const deleteClient = () => { const c = data.clients[confirmDelete]; updateData({ clients: data.clients.filter((_, i) => i !== confirmDelete), clientsSupprimes: [...data.clientsSupprimes, { ...c, deletedAt: new Date().toISOString() }] }); showToast('Client supprimé'); setConfirmDelete(null); };
@@ -2530,13 +2776,21 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               Afficher seulement les clients pros sans SIREN ({nbSansSiren}) — nécessaire pour la facture électronique
             </label>
           )}
+          {tab === 'actifs' && clientsUE.length > 0 && RELAIS && (
+            <div style={{margin: '-4px 0 14px'}}>
+              <button className="btn btn-outline" onClick={lancerVerifTous}>Vérifier les n° de TVA des clients de l'Union européenne ({clientsUE.length})</button>
+            </div>
+          )}
           <div className="card" style={{padding: 0, overflow: 'hidden'}}>
             <table>
-              <thead><tr><SortHeader col="numero">Code</SortHeader><SortHeader col="type">Type</SortHeader><SortHeader col="nom">Nom</SortHeader><SortHeader col="ville">Ville</SortHeader><SortHeader col="siren">SIREN</SortHeader><th style={{width: 100}}>Actions</th></tr></thead>
+              <thead><tr><SortHeader col="numero">Code</SortHeader><SortHeader col="type">Type</SortHeader><SortHeader col="nom">Nom</SortHeader><SortHeader col="ville">Ville</SortHeader><SortHeader col="siren">SIREN / TVA</SortHeader><th style={{width: 100}}>Actions</th></tr></thead>
               <tbody>
                 {filtered.length === 0 ? <tr><td colSpan="6" style={{textAlign: 'center', padding: 40}}>Aucun client</td></tr> : filtered.map((c, i) => (
                   <tr key={c.numero + i}><td className="ref-code">{c.numero}</td><td>{getTypeBadge(c.type)}</td><td>{nomAffiche(c)}{enseigneDistincte(c) && <div className="nom-legal">{c.nom}</div>}</td><td>{c.ville}</td>
-                    <td className="ref-code">{c.siren ? c.siren : (manqueSiren(c) ? <span className="siren-manquant" title="SIREN nécessaire pour la facture électronique">à compléter</span> : '')}</td>
+                    <td className="ref-code">{clientUE(c) ? (() => { const v = viesAJour(c); const n = tvaNormalisee(c);
+                        if (!n) return <span className="siren-manquant" title="N° de TVA nécessaire pour vendre sans TVA">TVA à demander</span>;
+                        return <>{n} {v ? (v.valide ? <span className="tva-ok" title={`Valide selon VIES le ${dateFr(v.date)}`}>✓</span> : <span className="tva-ko" title={`Inconnu de VIES le ${dateFr(v.date)}`}>✗</span>) : <span className="tva-attente" title="Pas encore vérifié dans VIES">à vérifier</span>}</>; })()
+                      : c.siren ? c.siren : (manqueSiren(c) ? <span className="siren-manquant" title="SIREN nécessaire pour la facture électronique">à compléter</span> : '')}</td>
                     <td><div className="actions-cell">
                       {tab === 'actifs' ? <><button className="btn btn-icon btn-ghost edit" onClick={() => openEdit(data.clients.indexOf(c))}>{Icons.edit}</button><button className="btn btn-icon btn-ghost delete" onClick={() => setConfirmDelete(data.clients.indexOf(c))}>{Icons.trash}</button></> : <button className="btn btn-icon btn-ghost restore" onClick={() => restoreClient(data.clientsSupprimes.indexOf(c))}>{Icons.restore}</button>}
                     </div></td>
@@ -2551,7 +2805,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 <div className="modal-header"><div className="modal-title">{editIndex !== null ? 'Modifier' : 'Nouveau'} client</div><button className="close-btn" onClick={() => setModal(null)}>×</button></div>
                 <div className="form-grid">
                   <div className="form-group"><label>Code</label><input value={modal.numero} disabled /></div>
-                  <div className="form-group"><label>Type</label><select value={modal.type} onChange={e => setModal({...modal, type: e.target.value})}><option value="pro">Professionnel</option><option value="Particulier">Particulier</option><option value="export">Export</option></select></div>
+                  <div className="form-group"><label>Type</label><select value={{ pro: 'Pro', particulier: 'Particulier', export: 'Export' }[typeClient(modal)]} onChange={e => setModal({...modal, type: e.target.value})}><option value="Pro">Professionnel</option><option value="Particulier">Particulier</option><option value="Export">Export</option></select></div>
                   {(() => {
                     const pro = typeClient(modal) === 'pro' && estFrance(modal);
                     const part = typeClient(modal) === 'particulier';
@@ -2589,7 +2843,15 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                               {sirenFaux && <span className="error-msg">SIREN invalide</span>}
                             </div>}
                             <div className={`form-group ${estFrance(modal) ? '' : 'full'}`}><label>N° TVA intracommunautaire</label>
-                              <input value={modal.tvaIntra || ''} readOnly={verrou} placeholder={estFrance(modal) ? 'Calculé depuis le SIREN' : "Clients de l'Union européenne seulement, ex. DE123456789"} onChange={e => setModal({...modal, tvaIntra: e.target.value})} /></div>
+                              <input value={modal.tvaIntra || ''} readOnly={verrou} placeholder={estFrance(modal) ? 'Calculé depuis le SIREN' : "Clients de l'Union européenne seulement, ex. DE123456789"} onChange={e => setModal({...modal, tvaIntra: e.target.value})} />
+                              {!estFrance(modal) && (paysUE(modal.pays) || modal.tvaIntra) && (
+                                <VerifVies client={modal} demandeur={data.entreprise.tvaIntra}
+                                  onResultat={(vies) => setModal(m => ({...m, tvaIntra: vies.numero, vies}))}
+                                  onReprendre={(v) => setModal(m => { const a = adresseDepuisVies(v.adresse) || {};
+                                    const ancien = m.enseigne || m.nom || '';
+                                    return {...m, nom: v.nom, enseigne: ancien && normNom(ancien) !== normNom(v.nom) ? ancien : (m.enseigne || ''),
+                                      adresse: a.adresse ?? m.adresse, codePostal: a.codePostal ?? m.codePostal, ville: a.ville ?? m.ville, _cle: (m._cle || 0) + 1}; })} />
+                              )}</div>
                           </>)}
                           <AdresseBloc key={`fact-${modal.numero}-${modal._cle || 0}`} titre={part ? 'Adresse' : 'Adresse du siège'} valeur={modal}
                             onChange={(v) => setModal(m => ({...m, adresse: v.adresse, codePostal: v.codePostal, ville: v.ville, pays: v.pays}))} />
@@ -2633,6 +2895,21 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             </div>
           )}
           {confirmDelete !== null && <ConfirmModal title="Supprimer ?" message="Le client sera déplacé vers la corbeille." onConfirm={deleteClient} onCancel={() => setConfirmDelete(null)} />}
+          {verifTous && (
+            <div className="modal-overlay" onClick={() => !verifTous.enCours && setVerifTous(null)}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header"><div className="modal-title">N° de TVA des clients de l'Union européenne</div>{!verifTous.enCours && <button className="close-btn" onClick={() => setVerifTous(null)}>×</button>}</div>
+                <p style={{fontSize: 13, marginBottom: 10}}>{verifTous.enCours ? `Vérification dans VIES… ${verifTous.resultats.length} / ${verifTous.total}` : `Terminé : ${verifTous.resultats.filter(r => r.statut === 'valide').length} valide(s) sur ${verifTous.total}. Les résultats sont enregistrés dans les fiches.`}</p>
+                <table className="verif-liste"><tbody>
+                  {[...verifTous.resultats].sort((a, b) => (a.statut === 'valide') - (b.statut === 'valide')).map(r => (
+                    <tr key={r.c.numero}><td className="ref-code">{r.c.numero}</td><td>{nomAffiche(r.c)}</td><td>{r.c.pays}</td>
+                      <td>{r.statut === 'valide' ? <span className="tva-ok">✓ valide</span> : r.statut === 'invalide' ? <span className="tva-ko">✗ inconnu de VIES</span> : r.statut === 'manquant' ? <span className="siren-manquant">n° à demander</span> : <span className="tva-ko" title={r.texte}>non vérifié : {r.texte}</span>}</td></tr>
+                  ))}
+                </tbody></table>
+                {!verifTous.enCours && <div className="btn-group"><button className="btn btn-primary" onClick={() => setVerifTous(null)}>Fermer</button></div>}
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -2651,11 +2928,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const exportExcel = () => {
         const wb = XLSX.utils.book_new();
-        const prodHeaders = ['Référence', 'Cuvée', 'Millésime', 'Contenance', 'Variante', 'Prix HT'];
-        const prodRows = data.produits.map(p => [p.reference, p.cuvee, p.millesime, p.contenance, p.variante || '', p.prixHT]);
+        const prodHeaders = ['Référence', 'Cuvée', 'Millésime', 'Contenance', 'Prix pro HT', 'Prix export HT', 'Prix particulier', 'Particulier saisi', 'Épuisé'];
+        const prodRows = data.produits.map(p => { const px = prixProduit(p); return [p.reference, p.cuvee, p.millesime, p.contenance, px.pro ?? '', px.export ?? '', px.particulier ?? '', p.particulierTTC ? 'TTC' : 'HT', p.epuise ? 'oui' : '']; });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([prodHeaders, ...prodRows]), 'Produits');
-        const clientHeaders = ['Numéro', 'Type', 'Raison sociale / Nom', 'Enseigne', 'SIREN', 'Adresse', 'CP', 'Ville', 'Pays', 'Tél', 'Email'];
-        const clientRows = data.clients.map(c => [c.numero, c.type, c.nom, c.enseigne || '', c.siren || '', c.adresse, c.codePostal, c.ville, c.pays, c.telephone || c.portable, c.email]);
+        const clientHeaders = ['Numéro', 'Type', 'Raison sociale / Nom', 'Enseigne', 'SIREN', 'N° TVA', 'Vérifié VIES', 'Adresse', 'CP', 'Ville', 'Pays', 'Tél', 'Email'];
+        const clientRows = data.clients.map(c => { const v = viesAJour(c); return [c.numero, c.type, c.nom, c.enseigne || '', c.siren || '', c.tvaIntra || '', v ? `${v.valide ? 'valide' : 'invalide'} le ${dateFr(v.date)}${v.consultation ? ' (' + v.consultation + ')' : ''}` : '', c.adresse, c.codePostal, c.ville, c.pays, c.telephone || c.portable, c.email]; });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([clientHeaders, ...clientRows]), 'Clients');
         const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement'];
         const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, f.statut, f.echeance, f.datePaiement]);

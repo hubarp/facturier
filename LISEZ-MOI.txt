@@ -17,7 +17,22 @@ AU QUOTIDIEN
 - Fermer la fenêtre suffit : tout est enregistré automatiquement, au fil de l'eau.
 - Envoyer une facture à un client pro : ouvrir la facture > « Facture électronique »
   > « Envoyer via Super PDP ». Le statut se met à jour tout seul.
-- Factures de vos fournisseurs : menu « Factures reçues ».
+- Factures de vos fournisseurs : Factures > onglet « Reçues ».
+
+PRODUITS ET TARIFS
+- Une fiche par bouteille : cuvée + millésime + contenance. Ne créez plus de produit « export » ou
+  « particulier » : chaque bouteille a trois prix (pro, export, particulier). Le prix particulier peut se
+  saisir TTC. Un prix laissé vide est remplacé par le prix pro.
+- La facture prend toute seule le prix qui correspond au type du client. On peut le changer sur la ligne.
+- Bouteilles offertes : cochez « Offerte » sur la ligne (0 € sur la facture, comptées en douane).
+- Bouteille vendue en totalité : « Marquer épuisé » plutôt que supprimer. Nouveau millésime : bouton « + »
+  sur la ligne du produit, qui recopie la fiche avec une nouvelle référence.
+
+CLIENTS DE L'UNION EUROPÉENNE
+- Le n° de TVA du client se vérifie dans VIES (registre de la Commission européenne) depuis sa fiche,
+  ou pour tous les clients d'un coup : Clients > « Vérifier les n° de TVA… ».
+- Avec votre propre n° de TVA dans Paramètres, VIES délivre un n° de consultation : c'est la preuve
+  que le numéro a été vérifié. Il est gardé dans la fiche du client.
 
 OÙ SONT LES DONNÉES
 - Dans le dossier « donnees » à côté de ce fichier :

@@ -29,11 +29,12 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.20-1"
+VERSION = "2026.10.20-2"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 DONNEES = Path(os.environ.get("FACTURIER_DONNEES") or ICI.parent / "donnees")
 PORT = int(os.environ.get("FACTURIER_PORT", "8765"))
 API = os.environ.get("SUPER_PDP_API", "https://api.superpdp.tech").rstrip("/")
+VIES = os.environ.get("FACTURIER_VIES", "https://ec.europa.eu/taxation_customs/vies/rest-api").rstrip("/")
 FICHIER_IDS = DONNEES / "identifiants.txt"
 FICHIER_DONNEES = DONNEES / "facturier.json"
 SAUVEGARDES = DONNEES / "sauvegardes"
@@ -301,6 +302,80 @@ def act_recues(q, _corps):
     return SPDP.json("GET", "invoices", params=params)
 
 
+# ---------------------------------------------------------------- VIES (n° de TVA intracommunautaire)
+
+ERREURS_VIES = {
+    "INVALID_INPUT": "Numéro mal formé pour ce pays : vérifiez-le",
+    "INVALID_REQUESTER_INFO": "Votre propre n° de TVA (Paramètres) n'est pas reconnu par VIES",
+    "MS_UNAVAILABLE": "Le service du pays du client est momentanément indisponible : réessayez plus tard",
+    "MS_MAX_CONCURRENT_REQ": "Le service du pays du client est surchargé : réessayez dans quelques minutes",
+    "GLOBAL_MAX_CONCURRENT_REQ": "VIES est surchargé : réessayez dans quelques minutes",
+    "SERVICE_UNAVAILABLE": "VIES est momentanément indisponible : réessayez plus tard",
+    "TIMEOUT": "Le service du pays du client n'a pas répondu à temps : réessayez plus tard",
+    "VAT_BLOCKED": "Ce numéro est bloqué par VIES",
+    "IP_BLOCKED": "VIES refuse temporairement les demandes de ce PC : réessayez plus tard",
+}
+
+
+def _texte_vies(v):
+    v = str(v or "").strip()
+    return "" if v in ("---", "--", "-") else v
+
+
+def _numero_tva(v):
+    return re.sub(r"[^A-Za-z0-9]", "", str(v or "")).upper()
+
+
+def act_vies(_q, corps):
+    """Vérifie un n° de TVA dans VIES. Avec le n° de TVA de l'entreprise, VIES délivre un n° de consultation,
+    preuve officielle de la vérification à conserver."""
+    try:
+        d = json.loads((corps or b"{}").decode("utf-8"))
+    except ValueError:
+        raise ErreurAPI(400, "Demande illisible")
+    num = _numero_tva(d.get("numero"))
+    pays = _numero_tva(d.get("pays"))[:2]
+    if re.match(r"^[A-Z]{2}", num):
+        pays, num = num[:2], num[2:]
+    pays = {"GR": "EL"}.get(pays, pays)
+    if not re.fullmatch(r"[A-Z]{2}", pays) or not num:
+        raise ErreurAPI(400, "N° de TVA incomplet : il doit commencer par le code du pays (ex. DE123456789)")
+    demande = {"countryCode": pays, "vatNumber": num}
+    dem = _numero_tva(d.get("demandeur"))
+    if re.match(r"^[A-Z]{2}[A-Z0-9]+$", dem):
+        demande.update(requesterMemberStateCode=dem[:2], requesterNumber=dem[2:])
+
+    def appeler(dm):
+        try:
+            code, ct, brut = requete("POST", f"{VIES}/check-vat-number", json.dumps(dm).encode("utf-8"),
+                                     {"Content-Type": "application/json", "Accept": "application/json"}, timeout=40)
+        except OSError as e:
+            raise ErreurAPI(502, f"VIES injoignable : vérifiez la connexion internet ({e})")
+        rep = decode(ct, brut)
+        if not isinstance(rep, dict):
+            raise ErreurAPI(502, f"Réponse inattendue de VIES (HTTP {code})")
+        err = ((rep.get("errorWrappers") or [{}])[0] or {}).get("error") or (rep.get("userError") if rep.get("userError") not in (None, "VALID", "INVALID") else None)
+        if err or code >= 300:
+            return None, err or f"HTTP {code}"
+        return rep, None
+
+    rep, err = appeler(demande)
+    sans_preuve = False
+    if err == "INVALID_REQUESTER_INFO" and "requesterNumber" in demande:
+        # Le n° de l'entreprise est refusé : on vérifie quand même le client, sans n° de consultation
+        rep, err = appeler({"countryCode": pays, "vatNumber": num})
+        sans_preuve = True
+    if err:
+        journal(f"VIES {pays}{num} : erreur {err}")
+        raise ErreurAPI(502 if err not in ("INVALID_INPUT", "VAT_BLOCKED") else 400, ERREURS_VIES.get(err, f"VIES a répondu : {err}"))
+    valide = bool(rep.get("valid"))
+    journal(f"VIES {pays}{num} : {'valide' if valide else 'invalide'}")
+    return {"pays": pays, "numero": num, "valide": valide, "nom": _texte_vies(rep.get("name")),
+            "adresse": _texte_vies(rep.get("address")), "consultation": "" if sans_preuve else str(rep.get("requestIdentifier") or ""),
+            "date": str(rep.get("requestDate") or datetime.now().astimezone().isoformat(timespec="seconds")),
+            "demandeurRefuse": sans_preuve}
+
+
 # ---------------------------------------------------------------- signature (Ed25519, RFC 8032, vérification seule)
 
 _P = 2 ** 255 - 19
@@ -563,6 +638,7 @@ ACTIONS = {
     ("POST", "/api/envoyer"): act_envoyer,
     ("GET", "/api/suivi"): act_suivi,
     ("GET", "/api/recues"): act_recues,
+    ("POST", "/api/vies"): act_vies,
 }
 
 
