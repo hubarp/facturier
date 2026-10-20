@@ -215,6 +215,7 @@
     .choix-entreprise select { width: 100%; font-size: 13px; font-weight: 600; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--primary); color: var(--primary); background: var(--primary-light); cursor: pointer; }
     .bandeau-entreprise { background: var(--primary); color: #fff; border-radius: 10px; padding: 8px 14px; margin-bottom: 18px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
     .bandeau-entreprise button { background: rgba(255,255,255,.18); color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .badge-entreprise { color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: middle; }
     .liste-entreprises td { padding: 8px 10px; font-size: 13px; }
     .ligne-libre { display: grid; grid-template-columns: 2fr 70px 110px 100px 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
     .alerte-info { background: var(--warning-light); color: #7b341e; border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-top: 6px; }
@@ -943,7 +944,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     // Entreprise active pour cette fenêtre : la principale à chaque ouverture, l'autre seulement si on la choisit
     const ENTREPRISE = (() => { try { return (RELAIS && sessionStorage.getItem('facturier_entreprise')) || 'principale'; } catch { return 'principale'; } })();
     const CLE_CACHE = ENTREPRISE === 'principale' ? 'facturier_data_v4' : `facturier_data_v4_${ENTREPRISE}`;
-    const changerEntreprise = (id) => { try { sessionStorage.setItem('facturier_entreprise', id); } catch {} location.reload(); };
+    // Enregistrement en attente forcé avant de quitter la page (changement d'entreprise, autre fenêtre)
+    const ECRITURE = { maintenant: async () => {} };
+    const changerEntreprise = async (id) => { try { await ECRITURE.maintenant(); } catch {} try { sessionStorage.setItem('facturier_entreprise', id); } catch {} location.reload(); };
     const COULEURS_ENTREPRISE = ['#7c3aed', '#0f766e', '#b45309', '#be185d'];
     const EntrepriseCtx = React.createContext({ liste: [], active: 'principale' });
     // Mode « simple » : factures à lignes libres (intitulé + prix), sans catalogue, transport ni douanes
@@ -1054,6 +1057,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       useEffect(() => {
         if (!RELAIS) return;
         (async () => {
+          await prendreLaMain();
           const liste = await chargerEntreprises();
           if (liste && !liste.some(e => e.id === ENTREPRISE)) { changerEntreprise('principale'); return; }
           try {
@@ -1068,26 +1072,68 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               let reglages = {};
               try { reglages = JSON.parse(sessionStorage.getItem('facturier_nouvelle_entreprise') || '{}'); sessionStorage.removeItem('facturier_nouvelle_entreprise'); } catch {}
               const ent = (liste || []).find(e => e.id === ENTREPRISE) || {};
-              setData({ ...INITIAL_DATA, entreprise: { ...INITIAL_DATA.entreprise, raisonSociale: ent.nom || '', mode: reglages.mode || 'simple', prefixeFacture: reglages.prefixe || 'E' } });
+              const communs = r.clientsCommuns || {};
+              setData({ ...INITIAL_DATA, clients: communs.clients || [], clientsSupprimes: communs.clientsSupprimes || [],
+                entreprise: { ...INITIAL_DATA.entreprise, raisonSociale: ent.nom || '', mode: reglages.mode || 'simple', prefixeFacture: reglages.prefixe || 'E' } });
               setPage('parametres');
-            } else if (!copieLocale.current) setPremiereOuverture(true);
+            } else {
+              const communs = r.clientsCommuns || {};
+              if ((communs.clients || []).length) setData(d => ({ ...d, clients: communs.clients, clientsSupprimes: communs.clientsSupprimes || [] }));
+              if (!copieLocale.current) setPremiereOuverture(true);
+            }
           } catch (e) { showToast(`Données illisibles : ${e.message}`); setPret('erreur'); return; }
           setPret(true);
         })();
       }, []);
 
+      // Une seule fenêtre active : une nouvelle fenêtre du Facturier désactive les précédentes (après leur dernier enregistrement)
+      const [remplacee, setRemplacee] = useState(false);
+      const remplaceeRef = useRef(false);
+      const canal = useRef(null);
+      const prendreLaMain = () => new Promise(fin => {
+        if (typeof BroadcastChannel === 'undefined') return fin();
+        const moi = Math.random().toString(36).slice(2);
+        const c = new BroadcastChannel('facturier'); canal.current = c;
+        let autre = false, fini = false;
+        const terminer = () => { if (!fini) { fini = true; fin(); } };
+        c.onmessage = async (ev) => {
+          const m = ev.data || {};
+          if (m.de === moi) return;
+          if (m.type === 'nouvelle') {
+            c.postMessage({ type: 'presente', de: moi });
+            remplaceeRef.current = true;
+            try { await ECRITURE.maintenant(true); } catch {}
+            setRemplacee(true);
+            c.postMessage({ type: 'liberee', de: moi });
+          } else if (m.type === 'presente') { autre = true; setTimeout(terminer, 3000); }
+          else if (m.type === 'liberee') terminer();
+        };
+        c.postMessage({ type: 'nouvelle', de: moi });
+        setTimeout(() => { if (!autre) terminer(); }, 300);
+      });
+      const ecrireDonnees = async (texte) => {
+        await appelRelais('/api/donnees', { methode: 'PUT', type: 'application/json', corps: texte });
+        derniereEcrite.current = texte;
+        if (erreurEcriture.current) { erreurEcriture.current = false; showToast('Enregistrement rétabli'); }
+      };
+      const texteAEcrire = useRef(null);
+      ECRITURE.maintenant = async (meme) => {
+        clearTimeout(minuterieEcriture.current);
+        const texte = texteAEcrire.current;
+        if (!RELAIS || pret !== true || !texte || texte === derniereEcrite.current || (remplaceeRef.current && !meme)) return;
+        await ecrireDonnees(texte);
+      };
       useEffect(() => {
         try { localStorage.setItem(CLE_CACHE, JSON.stringify(data)); } catch {}
-        if (!RELAIS || pret !== true) return;
+        if (!RELAIS || pret !== true || remplaceeRef.current) return;
         const texte = JSON.stringify(data);
+        texteAEcrire.current = texte;
         if (texte === derniereEcrite.current) return;
         clearTimeout(minuterieEcriture.current);
         minuterieEcriture.current = setTimeout(async () => {
-          try {
-            await appelRelais('/api/donnees', { methode: 'PUT', type: 'application/json', corps: texte });
-            derniereEcrite.current = texte;
-            if (erreurEcriture.current) { erreurEcriture.current = false; showToast('Enregistrement rétabli'); }
-          } catch (e) { if (!erreurEcriture.current) { erreurEcriture.current = true; showToast(`Enregistrement impossible : ${e.message}`); } }
+          if (remplaceeRef.current) return;
+          try { await ecrireDonnees(texte); }
+          catch (e) { if (!erreurEcriture.current) { erreurEcriture.current = true; showToast(`Enregistrement impossible : ${e.message}`); } }
         }, 700);
       }, [data, pret]);
 
@@ -1190,7 +1236,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       };
 
       const getNextClientNum = () => {
-        const nums = data.clients.map(c => parseInt(c.numero.replace('C', '')) || 0);
+        const nums = [...data.clients, ...(data.clientsSupprimes || [])].map(c => parseInt(String(c.numero).replace('C', '')) || 0);
         return `C${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
       };
 
@@ -1254,6 +1300,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 {majEnCours.erreur
                   ? (<><div className="modal-title" style={{marginBottom: 12}}>La mise à jour n'a pas abouti</div><p className="alerte-info">{majEnCours.erreur}</p><div className="btn-group"><button className="btn btn-outline" onClick={() => setMajEnCours(null)}>Fermer</button></div></>)
                   : (<><div className="modal-title" style={{marginBottom: 12}}>{majEnCours.libelle}…</div><p style={{fontSize: 13}}>Ne fermez pas la fenêtre : le Facturier se recharge tout seul dans quelques secondes. Vos données ne sont pas touchées.</p></>)}
+              </div></div>
+            )}
+            {remplacee && (
+              <div className="modal-overlay"><div className="modal">
+                <div className="modal-title" style={{marginBottom: 12}}>Le Facturier est ouvert dans une autre fenêtre</div>
+                <p style={{fontSize: 13}}>Pour ne rien perdre, une seule fenêtre peut travailler à la fois. Celle-ci est désactivée ; vos dernières modifications ont été enregistrées. Fermez-la et continuez dans l'autre.</p>
+                <div className="btn-group"><button className="btn btn-primary" onClick={() => window.close()}>Fermer cette fenêtre</button></div>
               </div></div>
             )}
             {pret === 'erreur' && <div className="card bandeau-import"><div className="card-title">Données illisibles</div><p>Le fichier des données n'a pas pu être lu : rien ne sera enregistré pendant cette session. Fermez la fenêtre et rouvrez le Facturier ; si le problème continue, une sauvegarde du jour précédent se trouve dans le dossier « donnees/sauvegardes ».</p></div>}
@@ -2786,58 +2839,6 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       </>);
     }
 
-    // Import d'une fiche client depuis une autre entreprise du Facturier (copie : les deux fiches vivent ensuite séparément)
-    function ImportClientAutreEntreprise({ data, updateData, getNextNum, showToast, onClose }) {
-      const ctx = React.useContext(EntrepriseCtx);
-      const autres = ctx.liste.filter(e => e.id !== ctx.active);
-      const [source, setSource] = useState(autres[0] ? autres[0].id : '');
-      const [clients, setClients] = useState(null);
-      const [erreur, setErreur] = useState('');
-      const [q, setQ] = useState('');
-      useEffect(() => {
-        if (!source) return;
-        setClients(null); setErreur('');
-        appelRelais('/api/donnees', { entreprise: source })
-          .then(r => setClients(((r.donnees && r.donnees.clients) || []).filter(c => c.nom)))
-          .catch(e => setErreur(e.message));
-      }, [source]);
-      const present = (c) => data.clients.some(x => (c.siren && chiffres(x.siren) === chiffres(c.siren)) || normNom(x.nom) === normNom(c.nom));
-      const importer = (c) => {
-        const { numero, deletedAt, _cle, _cleL, _ancienneGardee, ...rest } = c;
-        const nouveau = { ...rest, numero: getNextNum() };
-        updateData({ clients: [...data.clients, nouveau] });
-        showToast(`${nomAffiche(c)} importé (${nouveau.numero})`);
-      };
-      const s = normNom(q);
-      const liste = (clients || []).filter(c => !s || normNom(`${c.nom} ${c.enseigne || ''} ${c.ville || ''} ${c.siren || ''}`).includes(s)).sort((a, b) => nomAffiche(a).localeCompare(nomAffiche(b)));
-      return (
-        <div className="modal-overlay" onClick={onClose}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header"><div className="modal-title">Importer un client d'une autre entreprise</div><button className="close-btn" onClick={onClose}>×</button></div>
-            {autres.length > 1 && <div className="form-group"><label>Depuis</label><select value={source} onChange={e => setSource(e.target.value)}>{autres.map(e => <option key={e.id} value={e.id}>{e.nom || e.id}</option>)}</select></div>}
-            <p style={{fontSize: 12, color: 'var(--text-muted)', marginBottom: 8}}>Depuis {(autres.find(e => e.id === source) || {}).nom || 'l\'autre entreprise'}. La fiche est copiée avec un nouveau code client ; les deux fiches évoluent ensuite séparément.</p>
-            <div className="search-bar" style={{marginBottom: 10}}><input autoFocus placeholder="Rechercher un nom, une enseigne, une ville, un SIREN…" value={q} onChange={e => setQ(e.target.value)} /></div>
-            {erreur && <div className="vies vies-ko">{erreur}</div>}
-            {!clients && !erreur && <p style={{fontSize: 13}}>Chargement…</p>}
-            {clients && (
-              <div style={{maxHeight: 380, overflowY: 'auto'}}>
-                <table className="verif-liste"><tbody>
-                  {liste.slice(0, 100).map(c => (
-                    <tr key={c.numero}><td>{nomAffiche(c)}{enseigneDistincte(c) && <div className="nom-legal">{c.nom}</div>}</td><td>{c.ville}</td><td style={{textAlign: 'right'}}>
-                      {present(c) ? <span style={{color: 'var(--text-muted)'}}>déjà présent</span> : <button className="btn btn-outline" onClick={() => importer(c)}>Importer</button>}
-                    </td></tr>
-                  ))}
-                  {!liste.length && <tr><td style={{padding: 20, textAlign: 'center'}}>Aucun client</td></tr>}
-                  {liste.length > 100 && <tr><td colSpan="3" style={{padding: 10, textAlign: 'center', color: 'var(--text-muted)'}}>{liste.length - 100} autres : tapez un nom pour affiner</td></tr>}
-                </tbody></table>
-              </div>
-            )}
-            <div className="btn-group"><button className="btn btn-primary" onClick={onClose}>Fermer</button></div>
-          </div>
-        </div>
-      );
-    }
-
     // Page Clients
     function PageClients({ data, updateData, getNextNum, showToast }) {
       const [tab, setTab] = useState('actifs');
@@ -2851,9 +2852,16 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const [sansSiren, setSansSiren] = useState(false);
       const [etabs, setEtabs] = useState([]);
       const [verifTous, setVerifTous] = useState(null);
-      const [importAutre, setImportAutre] = useState(false);
       const ctxEnt = React.useContext(EntrepriseCtx);
-
+      // Entreprises où chaque client a des factures (les autres entreprises sont lues par le programme local)
+      const [usageAutres, setUsageAutres] = useState({});
+      useEffect(() => { if (RELAIS && ctxEnt.liste.length > 1) appelRelais('/api/clients/usage').then(r => setUsageAutres(r.usage || {})).catch(() => {}); }, [ctxEnt.liste.length]);
+      const usage = (numero) => {
+        const ids = new Set((usageAutres[numero] || []).filter(id => id !== ctxEnt.active));
+        if ([...data.factures, ...(data.facturesSupprimes || [])].some(f => f.clientId === numero)) ids.add(ctxEnt.active);
+        return ctxEnt.liste.filter(e => ids.has(e.id));
+      };
+      const sigle = (e) => { const n = (e.nom || '').toUpperCase(); return /\bEI\b/.test(n) ? 'EI' : /^(SAS|SARL|EURL|SA|SCEA|EARL|GAEC)\b/.test(n) ? n.split(' ')[0] : (e.id === 'principale' ? 'Principale' : (e.nom || e.id).slice(0, 12)); };
       const clients = tab === 'actifs' ? data.clients : data.clientsSupprimes;
       const clientsUE = data.clients.filter(c => c.nom && clientUE(c));
       const lancerVerifTous = async () => {
@@ -2897,6 +2905,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const client = { ...rest, siren, enseigne, livraison, tvaIntra: estFrance(modal) ? (modal.tvaIntra || '').replace(/\s/g, '').toUpperCase() : tvaNormalisee(modal) };
         if (editIndex !== null) { const updated = [...clients]; updated[editIndex] = client; updateData({ clients: updated }); showToast('Client modifié'); } else { updateData({ clients: [...data.clients, client] }); showToast('Client ajouté'); } setModal(null);
       };
+      const demanderSuppression = (index) => {
+        const u = usage(data.clients[index].numero);
+        if (u.length) { showToast(`Ce client a des factures (${u.map(sigle).join(', ')}) : il ne peut pas aller à la corbeille`); return; }
+        setConfirmDelete(index);
+      };
       const deleteClient = () => { const c = data.clients[confirmDelete]; updateData({ clients: data.clients.filter((_, i) => i !== confirmDelete), clientsSupprimes: [...data.clientsSupprimes, { ...c, deletedAt: new Date().toISOString() }] }); showToast('Client supprimé'); setConfirmDelete(null); };
       const restoreClient = (index) => { const c = data.clientsSupprimes[index]; const { deletedAt, ...rest } = c; updateData({ clientsSupprimes: data.clientsSupprimes.filter((_, i) => i !== index), clients: [...data.clients, rest] }); showToast('Client restauré'); };
       const SortHeader = ({ col, children }) => <th className={`sortable ${sortCol === col ? sortDir : ''}`} onClick={() => handleSort(col)}>{children}</th>;
@@ -2904,9 +2917,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       return (
         <div>
           <div className="page-header"><h1 className="page-title">Clients</h1><div className="btn-group" style={{marginTop: 0}}>
-            {RELAIS && ctxEnt.liste.length > 1 && <button className="btn btn-outline" onClick={() => setImportAutre(true)}>{Icons.upload} Importer d'une autre entreprise</button>}
             <button className="btn btn-primary" onClick={openAdd}>{Icons.plus} Nouveau</button></div></div>
-          {importAutre && <ImportClientAutreEntreprise data={data} updateData={updateData} getNextNum={getNextNum} showToast={showToast} onClose={() => setImportAutre(false)} />}
+
           <div className="tabs">
             <button className={`tab ${tab === 'actifs' ? 'active' : ''}`} onClick={() => setTab('actifs')}>Actifs ({data.clients.filter(c => c.nom).length})</button>
             <button className={`tab ${tab === 'corbeille' ? 'active' : ''}`} onClick={() => setTab('corbeille')}>Corbeille ({data.clientsSupprimes.length})</button>
@@ -2928,13 +2940,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <thead><tr><SortHeader col="numero">Code</SortHeader><SortHeader col="type">Type</SortHeader><SortHeader col="nom">Nom</SortHeader><SortHeader col="ville">Ville</SortHeader><SortHeader col="siren">SIREN / TVA</SortHeader><th style={{width: 100}}>Actions</th></tr></thead>
               <tbody>
                 {filtered.length === 0 ? <tr><td colSpan="6" style={{textAlign: 'center', padding: 40}}>Aucun client</td></tr> : filtered.map((c, i) => (
-                  <tr key={c.numero + i}><td className="ref-code">{c.numero}</td><td>{getTypeBadge(c.type)}</td><td>{nomAffiche(c)}{enseigneDistincte(c) && <div className="nom-legal">{c.nom}</div>}</td><td>{c.ville}</td>
+                  <tr key={c.numero + i}><td className="ref-code">{c.numero}</td><td>{getTypeBadge(c.type)}</td><td>{nomAffiche(c)}{ctxEnt.liste.length > 1 && usage(c.numero).map(e => <span key={e.id} className="badge-entreprise" style={{background: COULEURS_ENTREPRISE[ctxEnt.liste.indexOf(e) % COULEURS_ENTREPRISE.length]}} title={`A des factures chez ${e.nom}`}>{sigle(e)}</span>)}{enseigneDistincte(c) && <div className="nom-legal">{c.nom}</div>}</td><td>{c.ville}</td>
                     <td className="ref-code">{clientUE(c) ? (() => { const v = viesAJour(c); const n = tvaNormalisee(c);
                         if (!n) return <span className="siren-manquant" title="N° de TVA nécessaire pour vendre sans TVA">TVA à demander</span>;
                         return <>{n} {v ? (v.valide ? <span className="tva-ok" title={`Valide selon VIES le ${dateFr(v.date)}`}>✓</span> : <span className="tva-ko" title={`Inconnu de VIES le ${dateFr(v.date)}`}>✗</span>) : <span className="tva-attente" title="Pas encore vérifié dans VIES">à vérifier</span>}</>; })()
                       : c.siren ? c.siren : (manqueSiren(c) ? <span className="siren-manquant" title="SIREN nécessaire pour la facture électronique">à compléter</span> : '')}</td>
                     <td><div className="actions-cell">
-                      {tab === 'actifs' ? <><button className="btn btn-icon btn-ghost edit" onClick={() => openEdit(data.clients.indexOf(c))}>{Icons.edit}</button><button className="btn btn-icon btn-ghost delete" onClick={() => setConfirmDelete(data.clients.indexOf(c))}>{Icons.trash}</button></> : <button className="btn btn-icon btn-ghost restore" onClick={() => restoreClient(data.clientsSupprimes.indexOf(c))}>{Icons.restore}</button>}
+                      {tab === 'actifs' ? <><button className="btn btn-icon btn-ghost edit" onClick={() => openEdit(data.clients.indexOf(c))}>{Icons.edit}</button><button className="btn btn-icon btn-ghost delete" onClick={() => demanderSuppression(data.clients.indexOf(c))}>{Icons.trash}</button></> : <button className="btn btn-icon btn-ghost restore" onClick={() => restoreClient(data.clientsSupprimes.indexOf(c))}>{Icons.restore}</button>}
                     </div></td>
                   </tr>
                 ))}

@@ -35,7 +35,10 @@ PLUSIEURS ENTREPRISES
 - Le Facturier s'ouvre toujours sur l'entreprise principale. On change d'entreprise par le menu en haut à gauche ;
   un bandeau de couleur rappelle pour quelle entreprise on facture.
 - Les données d'une autre entreprise sont dans « donnees\entreprises\<code> ».
-- Client commun aux deux : Clients > « Importer d'une autre entreprise » copie sa fiche.
+- Les clients sont communs à toutes les entreprises (fichier « donnees\clients.json ») : une fiche modifiée
+  l'est partout. Dans la liste, une pastille indique chez quelle entreprise le client a des factures.
+  Un client qui a des factures ne peut pas être mis à la corbeille.
+- Une seule fenêtre du Facturier travaille à la fois : en ouvrir une deuxième désactive la première.
 - Paramètres > Sauvegarde & Export : « Sauvegarde complète » regroupe toutes les entreprises dans un seul
   fichier zip ; Excel et JSON ne concernent que l'entreprise ouverte.
 
