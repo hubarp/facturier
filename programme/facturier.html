@@ -449,7 +449,10 @@
     const clientDeFacture = (f, data) => {
       const snap = f.client || {};
       const actuel = (data.clients || []).find(c => c.numero === (f.clientId || snap.numero)) || {};
-      return { ...actuel, ...snap, siren: snap.siren || actuel.siren || '', tvaIntra: snap.tvaIntra || actuel.tvaIntra || '',
+      // SIREN / n° de TVA complétés depuis la fiche actuelle seulement tant que la facture est modifiable (émise, non
+      // déposée) : une facture envoyée ou payée se réimprime exactement comme elle était
+      const modifiable = !snap.nom || (f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe));
+      return { ...(modifiable ? actuel : {}), ...snap, siren: snap.siren || (modifiable ? actuel.siren : '') || '', tvaIntra: snap.tvaIntra || (modifiable ? actuel.tvaIntra : '') || '',
         enseigne: snap.nom ? (snap.enseigne || '') : (actuel.enseigne || ''), livraison: snap.livraison && snap.livraison.adresse ? snap.livraison : null };
     };
     // Raison sociale (nom légal, sur les factures) et enseigne (nom d'usage, pour l'affichage et la recherche)
@@ -497,10 +500,13 @@
     // Pays de l'Union européenne (hors France), pour la mention d'exonération de TVA
     const PAYS_UE = ['allemagne', 'autriche', 'belgique', 'bulgarie', 'chypre', 'croatie', 'danemark', 'espagne', 'estonie', 'finlande', 'grece', 'hongrie',
       'irlande', 'italie', 'lettonie', 'lituanie', 'luxembourg', 'malte', 'pays-bas', 'paysbas', 'hollande', 'pologne', 'portugal', 'republique tcheque', 'tchequie',
-      'roumanie', 'slovaquie', 'slovenie', 'suede', 'germany', 'austria', 'belgium', 'denmark', 'spain', 'netherlands', 'italy', 'sweden', 'poland', 'ireland', 'finland', 'lithuania'];
+      'roumanie', 'slovaquie', 'slovenie', 'suede', 'germany', 'austria', 'belgium', 'denmark', 'spain', 'netherlands', 'italy', 'sweden', 'poland', 'ireland', 'finland', 'lithuania',
+      'deutschland', 'osterreich', 'belgie', 'danmark', 'espana', 'nederland', 'italia', 'sverige', 'polska', 'eire', 'suomi', 'lietuva', 'greece', 'hellas', 'portugal', 'czechia', 'czech republic',
+      'croatia', 'hrvatska', 'cyprus', 'estonia', 'eesti', 'hungary', 'magyarorszag', 'latvia', 'latvija', 'malta', 'romania', 'slovakia', 'slovensko', 'slovenia', 'slovenija', 'bulgaria'];
     const paysUE = (pays) => PAYS_UE.includes(String(pays || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
     // ===== n° de TVA intracommunautaire et VIES =====
-    const CODES_UE = { allemagne: 'DE', germany: 'DE', autriche: 'AT', austria: 'AT', belgique: 'BE', belgium: 'BE', bulgarie: 'BG', chypre: 'CY', croatie: 'HR',
+    const CODES_UE = { deutschland: 'DE', osterreich: 'AT', belgie: 'BE', danmark: 'DK', espana: 'ES', nederland: 'NL', italia: 'IT', sverige: 'SE', polska: 'PL', greece: 'EL', hellas: 'EL', czechia: 'CZ', croatia: 'HR', cyprus: 'CY', estonia: 'EE', hungary: 'HU', latvia: 'LV', malta: 'MT', romania: 'RO', slovakia: 'SK', slovenia: 'SI', bulgaria: 'BG', lietuva: 'LT', suomi: 'FI', eire: 'IE',
+      allemagne: 'DE', germany: 'DE', autriche: 'AT', austria: 'AT', belgique: 'BE', belgium: 'BE', bulgarie: 'BG', chypre: 'CY', croatie: 'HR',
       danemark: 'DK', denmark: 'DK', espagne: 'ES', spain: 'ES', estonie: 'EE', finlande: 'FI', finland: 'FI', grece: 'EL', hongrie: 'HU', irlande: 'IE', ireland: 'IE',
       italie: 'IT', italy: 'IT', lettonie: 'LV', lituanie: 'LT', lithuania: 'LT', luxembourg: 'LU', malte: 'MT', 'pays-bas': 'NL', paysbas: 'NL', hollande: 'NL',
       netherlands: 'NL', pologne: 'PL', poland: 'PL', portugal: 'PT', 'republique tcheque': 'CZ', tchequie: 'CZ', roumanie: 'RO', slovaquie: 'SK', slovenie: 'SI', suede: 'SE', sweden: 'SE' };
@@ -519,7 +525,8 @@
     const dateFr = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso || '') : d.toLocaleDateString('fr-FR'); };
     const verifierVies = async (numero, demandeur) => {
       const r = await appelRelais('/api/vies', { methode: 'POST', corps: JSON.stringify({ numero, demandeur: demandeur || '' }), type: 'application/json' });
-      return { vies: { numero: r.pays + r.numero, valide: !!r.valide, nom: r.nom || '', adresse: r.adresse || '', consultation: r.consultation || '', date: r.date || new Date().toISOString() }, demandeurRefuse: !!r.demandeurRefuse };
+      return { vies: { numero: r.pays + r.numero, valide: !!r.valide, nom: r.nom || '', adresse: r.adresse || '', consultation: r.consultation || '', date: r.date || new Date().toISOString(),
+        demandeur: String(demandeur || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase() }, demandeurRefuse: !!r.demandeurRefuse };
     };
     // Adresse renvoyée par VIES (plusieurs lignes, la dernière souvent « code postal + ville ») → champs de la fiche
     const adresseDepuisVies = (texte) => {
@@ -532,8 +539,14 @@
     };
 
     // Mention obligatoire quand la facture est sans TVA (vente à l'étranger)
-    const mentionExoneration = (c, t) => {
+    // services = factures à lignes libres (entreprise en type « simple ») : règles des prestations de services
+    const mentionExoneration = (c, t, services = false) => {
       if (t.taux !== 0 || estFrance(c)) return '';
+      if (services) {
+        if (typeClient(c) === 'particulier') return '';
+        return paysUE(c.pays) ? 'Autoliquidation : TVA due par le preneur (article 283-2 du CGI, article 196 de la directive 2006/112/CE).'
+          : 'TVA non applicable, article 259-1 du CGI : prestation de services à un preneur établi hors de l\'Union européenne.';
+      }
       if (paysUE(c.pays)) return typeClient(c) === 'particulier' ? '' : 'Exonération de TVA, article 262 ter I du CGI : livraison intracommunautaire de biens.';
       return 'Exonération de TVA, article 262 I du CGI : exportation de biens.';
     };
@@ -546,8 +559,8 @@
       const m = mentionsEntreprise(e);
       const pro = typeClient(c) !== 'particulier';
       const lv = c.livraison;
-      const exo = mentionExoneration(c, t);
-      const simple = estSimple(data);
+      const simple = factureSimple(f, data);
+      const exo = mentionExoneration(c, t, simple);
       const totaux = [{ lib: simple ? 'Sous-total HT' : 'Vin HT', val: `${eur(t.vinHT)} €` }];
       if (t.remiseHT > 0) totaux.push({ lib: `Remise ${tauxTxt(t.remisePct)} %`, val: `-${eur(t.remiseHT)} €` });
       if (!simple || t.transportHT > 0) totaux.push({ lib: 'Transport HT', val: `${eur(t.transportHT)} €` });
@@ -570,7 +583,7 @@
         livraison: lv ? { titre: 'Livré à :', lignes: [lv.nom || '', lv.adresse || '', `${lv.codePostal || ''} ${lv.ville || ''}`, lv.pays || ''].filter(s => s.trim()), lignes2: [] } : null,
         transport: simple ? [] : [[['Transporteur :', f.transporteur || ''], ['n° EA :', e.ea || '']], [['Plaque :', f.plaque || ''], ['Opération :', 'livraison de biens']]],
         colonnes: [...(simple ? [] : [['Référence', 'g']]), ['Description', 'g'], ['PU HT', 'd'], ['Quantité', 'c'], ['Montant HT', 'd'], ['Taux TVA', 'c']],
-        lignes: t.lignes.map(l => [...(simple ? [] : [estExceptionnel(l) ? '' : l.produitRef]), l.libelle, eur(l.prixHT), String(l.quantite), eur(l.montantHT), `${tauxTxt(t.taux)} %`]),
+        lignes: t.lignes.map(l => [...(simple ? [] : [estExceptionnel(l) ? '' : l.produitRef]), l.libelle, prixUnitaire(l.prixHT), String(l.quantite), eur(l.montantHT), `${tauxTxt(t.taux)} %`]),
         infos: [['Échéance :', formatDate(f.echeance)], ...(simple ? [] : [['Nb bouteilles', String(t.nbBouteilles)]]), ['Règlement :', f.reglement || 'virement']],
         totaux, pied
       };
@@ -661,6 +674,7 @@
       const t = totauxFacture(f, data);
       const siret = chiffres(e.siret);
       if (bacASable ? siret.length < 9 : (siret.length !== 14 || !luhnOk(siret))) pb.push('SIRET de l\'entreprise absent ou invalide (Paramètres)');
+      if (!bacASable && !/^FR[0-9A-Z]{2}\d{9}$/.test(String(e.tvaIntra || '').replace(/\s/g, '').toUpperCase())) pb.push('N° de TVA intracommunautaire de l\'entreprise absent ou invalide (Paramètres)');
       if (typeClient(c) === 'particulier') pb.push('Client particulier : pas de facture électronique, ces ventes relèveront de la déclaration de ventes (e-reporting)');
       else if (typeClient(c) === 'export' || !estFrance(c)) pb.push('Client à l\'étranger : pas de facture électronique, ces ventes relèveront de la déclaration de ventes (e-reporting)');
       else {
@@ -693,7 +707,8 @@
       const bic = String(e.bic || '').replace(/\s/g, '').toUpperCase();
       const notes = [
         ['BAR', 'B2B'], ['PMT', m.indemnite], ['PMD', m.penalites], ['AAB', m.escompte],
-        ['AAI', `Document simplifié d'accompagnement pour le contrôle fiscal des produits soumis à accises en régime de droits acquittés. N° EA : ${e.ea || ''}. N° d'accise : ${e.numeroAccise || ''}. Transporteur : ${f.transporteur || ''}. Immatriculation : ${f.plaque || ''}. Nombre de bouteilles : ${t.nbBouteilles}.`]
+        ...(factureSimple(f, data) ? [] : [['AAI', `Document simplifié d'accompagnement pour le contrôle fiscal des produits soumis à accises en régime de droits acquittés. N° EA : ${e.ea || ''}. N° d'accise : ${e.numeroAccise || ''}. Transporteur : ${f.transporteur || ''}. Immatriculation : ${f.plaque || ''}. Nombre de bouteilles : ${t.nbBouteilles}.`]]),
+        ...(mentionExoneration(c, t, factureSimple(f, data)) ? [['TXD', mentionExoneration(c, t, factureSimple(f, data))]] : [])
       ];
       const ttaxe = (base, montant) => `<ram:ApplicableTradeTax>${montant !== undefined ? `<ram:CalculatedAmount>${eur(montant)}</ram:CalculatedAmount>` : ''}<ram:TypeCode>VAT</ram:TypeCode>${base !== undefined ? `<ram:BasisAmount>${eur(base)}</ram:BasisAmount>` : ''}<ram:CategoryCode>S</ram:CategoryCode><ram:RateApplicablePercent>${taux}</ram:RateApplicablePercent></ram:ApplicableTradeTax>`;
       const catTaxe = `<ram:CategoryTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>S</ram:CategoryCode><ram:RateApplicablePercent>${taux}</ram:RateApplicablePercent></ram:CategoryTradeTax>`;
@@ -945,12 +960,36 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const ENTREPRISE = (() => { try { return (RELAIS && sessionStorage.getItem('facturier_entreprise')) || 'principale'; } catch { return 'principale'; } })();
     const CLE_CACHE = ENTREPRISE === 'principale' ? 'facturier_data_v4' : `facturier_data_v4_${ENTREPRISE}`;
     // Enregistrement en attente forcé avant de quitter la page (changement d'entreprise, autre fenêtre)
-    const ECRITURE = { maintenant: async () => {} };
-    const changerEntreprise = async (id) => { try { await ECRITURE.maintenant(); } catch {} try { sessionStorage.setItem('facturier_entreprise', id); } catch {} location.reload(); };
+    const ECRITURE = { maintenant: async () => {}, bloque: false, alerte: (m) => alert(m) };
+    const changerEntreprise = async (id) => {
+      try { await ECRITURE.maintenant(); }
+      catch (e) { ECRITURE.alerte(`Vos dernières modifications n'ont pas pu être enregistrées (${e.message}) : changement d'entreprise annulé, réessayez dans un instant.`); return; }
+      try { sessionStorage.setItem('facturier_entreprise', id); } catch {}
+      ECRITURE.bloque = true;
+      location.reload();
+    };
+    // Import d'une sauvegarde JSON dans l'entreprise ouverte (confirmation, copie de sécurité côté programme local)
+    const importerSauvegarde = async (texte, data, updateData, showToast) => {
+      let d;
+      try { d = migrerDonnees({ ...INITIAL_DATA, ...JSON.parse(texte) }); } catch { showToast('Fichier invalide : rien n\'a été importé'); return; }
+      const dernier = (l) => [...(l || [])].map(f => f.numero).sort().pop() || 'aucune';
+      const nomSauv = (d.entreprise && d.entreprise.raisonSociale) || 'sans nom';
+      const nomActuel = data.entreprise.raisonSociale || 'l\'entreprise ouverte';
+      if (data.factures.length && !confirm(`Remplacer les données de ${nomActuel} (${data.factures.length} factures, dernière ${dernier(data.factures)}) par celles de la sauvegarde « ${nomSauv} » (${d.factures.length} factures, dernière ${dernier(d.factures)}) ?\n\nUne copie de sécurité est faite avant. Les fiches clients existantes ne sont pas modifiées.`)) return;
+      if (!RELAIS) { updateData(d); showToast('Données importées'); return; }
+      try {
+        await ECRITURE.maintenant();
+        ECRITURE.bloque = true;
+        await appelRelais('/api/importer', { methode: 'POST', type: 'application/json', corps: JSON.stringify(d) });
+        location.reload();
+      } catch (e) { ECRITURE.bloque = false; showToast(`Import refusé : ${e.message}`); }
+    };
     const COULEURS_ENTREPRISE = ['#7c3aed', '#0f766e', '#b45309', '#be185d'];
     const EntrepriseCtx = React.createContext({ liste: [], active: 'principale' });
     // Mode « simple » : factures à lignes libres (intitulé + prix), sans catalogue, transport ni douanes
     const estSimple = (data) => (data?.entreprise?.mode === 'simple');
+    // Une facture garde le type de facturation de son émission (changer le type dans Paramètres ne la modifie pas)
+    const factureSimple = (f, data) => f && f.mode ? f.mode === 'simple' : estSimple(data);
     const appelRelais = async (chemin, { methode = 'GET', corps, type, entreprise = ENTREPRISE } = {}) => {
       if (!RELAIS) throw new Error('Facturier ouvert comme simple fichier : ouvrez-le par son icône pour parler à Super PDP');
       let r;
@@ -958,7 +997,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       catch { throw new Error('Le Facturier ne répond plus : fermez cette fenêtre et rouvrez-le par son icône'); }
       const ct = r.headers.get('content-type') || '';
       const res = ct.includes('json') ? await r.json() : await r.blob();
-      if (!r.ok) throw new Error((res && res.erreur) || `Erreur ${r.status}`);
+      if (!r.ok) { const err = new Error((res && res.erreur) || `Erreur ${r.status}`); err.status = r.status; throw err; }
       return res;
     };
     const STATUTS_ECHEC = ['fr:213', 'fr:210', 'fr:501', 'api:invalid', 'api:rejected'];
@@ -1025,8 +1064,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const formatDate = (dateStr) => dateStr ? new Date(dateStr).toLocaleDateString('fr-FR') : '-';
     const isOverdue = (f) => f.echeance && f.statut !== 'payee' && new Date(f.echeance) < new Date();
     const getFactureStatut = (f) => f.statut === 'payee' ? 'payee' : isOverdue(f) ? 'enretard' : f.statut;
-    const canEditFacture = (f) => f.statut === 'emise' && !efactureDeposee(f);
-    const canDeleteFacture = (f) => f.statut === 'emise' && !efactureDeposee(f);
+    // Une facture électronique déposée (directement ou à la main) ne se modifie ni ne se supprime plus
+    const canEditFacture = (f) => f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe);
+    const canDeleteFacture = canEditFacture;
 
     function App() {
       const [data, setData] = useState(() => {
@@ -1065,7 +1105,18 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             if (r.donnees) {
               const d = migrerDonnees({ ...INITIAL_DATA, ...r.donnees });
               derniereEcrite.current = JSON.stringify(r.donnees);
-              setData(d);
+              revision.current = r.revision || 0;
+              // Modifications d'une session précédente qui n'ont pas pu être enregistrées (fenêtre fermée brutalement)
+              let brouillon = null;
+              try { brouillon = JSON.parse(localStorage.getItem(CLE_CACHE + '_brouillon') || 'null'); } catch {}
+              if (brouillon && brouillon.texte && brouillon.revision === revision.current) {
+                try { setData(migrerDonnees({ ...INITIAL_DATA, ...JSON.parse(brouillon.texte) })); showToast(`Modifications non enregistrées du ${new Date(brouillon.date).toLocaleString('fr-FR')} récupérées`); }
+                catch { setData(d); }
+              } else {
+                if (brouillon) showToast('Des modifications non enregistrées d\'une session précédente n\'ont pas pu être reprises : les données ont changé depuis');
+                setData(d);
+              }
+              try { localStorage.removeItem(CLE_CACHE + '_brouillon'); } catch {}
               if (estSimple(d)) setPage(p => p === 'douanes' || p === 'produits' ? 'factures' : p);
             } else if (ENTREPRISE !== 'principale') {
               // Entreprise tout juste créée : données vides, réglages repris de sa création
@@ -1073,11 +1124,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               try { reglages = JSON.parse(sessionStorage.getItem('facturier_nouvelle_entreprise') || '{}'); sessionStorage.removeItem('facturier_nouvelle_entreprise'); } catch {}
               const ent = (liste || []).find(e => e.id === ENTREPRISE) || {};
               const communs = r.clientsCommuns || {};
+              revision.current = r.revision || 0;
               setData({ ...INITIAL_DATA, clients: communs.clients || [], clientsSupprimes: communs.clientsSupprimes || [],
                 entreprise: { ...INITIAL_DATA.entreprise, raisonSociale: ent.nom || '', mode: reglages.mode || 'simple', prefixeFacture: reglages.prefixe || 'E' } });
               setPage('parametres');
             } else {
               const communs = r.clientsCommuns || {};
+              revision.current = r.revision || 0;
               if ((communs.clients || []).length) setData(d => ({ ...d, clients: communs.clients, clientsSupprimes: communs.clientsSupprimes || [] }));
               if (!copieLocale.current) setPremiereOuverture(true);
             }
@@ -1088,6 +1141,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       // Une seule fenêtre active : une nouvelle fenêtre du Facturier désactive les précédentes (après leur dernier enregistrement)
       const [remplacee, setRemplacee] = useState(false);
+      const [conflit, setConflit] = useState(false);
+      const revision = useRef(0);
       const remplaceeRef = useRef(false);
       const canal = useRef(null);
       const prendreLaMain = () => new Promise(fin => {
@@ -1100,9 +1155,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           const m = ev.data || {};
           if (m.de === moi) return;
           if (m.type === 'nouvelle') {
+            if (remplaceeRef.current || ECRITURE.bloque) return;          // une fenêtre déjà désactivée ne répond plus
             c.postMessage({ type: 'presente', de: moi });
+            try { await ECRITURE.maintenant(); }
+            catch (e) { showToast(`Une autre fenêtre du Facturier s'ouvre, mais vos dernières modifications n'ont pas pu être enregistrées (${e.message}) : restez dans cette fenêtre.`); return; }
             remplaceeRef.current = true;
-            try { await ECRITURE.maintenant(true); } catch {}
             setRemplacee(true);
             c.postMessage({ type: 'liberee', de: moi });
           } else if (m.type === 'presente') { autre = true; setTimeout(terminer, 3000); }
@@ -1112,29 +1169,75 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         setTimeout(() => { if (!autre) terminer(); }, 300);
       });
       const ecrireDonnees = async (texte) => {
-        await appelRelais('/api/donnees', { methode: 'PUT', type: 'application/json', corps: texte });
+        let r;
+        try { r = await appelRelais(`/api/donnees?revision=${revision.current}`, { methode: 'PUT', type: 'application/json', corps: texte }); }
+        catch (e) {
+          if (e.status === 409) { ECRITURE.bloque = true; setConflit(true); }
+          throw e;
+        }
+        revision.current = r.revision;
         derniereEcrite.current = texte;
+        try { localStorage.removeItem(CLE_CACHE + '_brouillon'); } catch {}
         if (erreurEcriture.current) { erreurEcriture.current = false; showToast('Enregistrement rétabli'); }
+        if (!r || !Array.isArray(r.clients)) return;
+        // Le programme local renvoie la liste commune des clients (codes éventuellement renumérotés) et les factures réaffectées
+        const envoye = JSON.parse(texte);
+        const reaff = r.reaffectations || {};
+        if (JSON.stringify(r.clients) === JSON.stringify(envoye.clients) && JSON.stringify(r.clientsSupprimes || []) === JSON.stringify(envoye.clientsSupprimes || []) && !Object.keys(reaff).length) return;
+        const cle = (c) => c.uid || c.numero;
+        const envoyes = new Map([...(envoye.clients || []), ...(envoye.clientsSupprimes || [])].map(c => [cle(c), JSON.stringify(c)]));
+        setData(prev => {
+          const locaux = [...prev.clients.map(c => [c, false]), ...(prev.clientsSupprimes || []).map(c => [c, true])];
+          const modifies = new Map(locaux.filter(([c]) => envoyes.get(cle(c)) !== JSON.stringify(c)).map(([c, sup]) => [cle(c), [c, sup]]));
+          const res = [...r.clients.map(c => [c, false]), ...(r.clientsSupprimes || []).map(c => [c, true])].map(([c, sup]) => modifies.get(cle(c)) || [c, sup]);
+          const presents = new Set(res.map(([c]) => cle(c)));
+          modifies.forEach((v, k) => { if (!presents.has(k)) res.push(v); });
+          const suivre = (f) => reaff[f.numero] ? { ...f, clientId: reaff[f.numero] } : f;
+          return { ...prev, clients: res.filter(x => !x[1]).map(x => x[0]), clientsSupprimes: res.filter(x => x[1]).map(x => x[0]),
+            factures: prev.factures.map(suivre), facturesSupprimes: (prev.facturesSupprimes || []).map(suivre) };
+        });
       };
       const texteAEcrire = useRef(null);
+      ECRITURE.alerte = showToast;
       ECRITURE.maintenant = async (meme) => {
         clearTimeout(minuterieEcriture.current);
         const texte = texteAEcrire.current;
-        if (!RELAIS || pret !== true || !texte || texte === derniereEcrite.current || (remplaceeRef.current && !meme)) return;
+        if (!RELAIS || pret !== true || !texte || texte === derniereEcrite.current || ECRITURE.bloque || (remplaceeRef.current && !meme)) return;
         await ecrireDonnees(texte);
       };
+      // Un enregistrement qui échoue est retenté (5 s, puis de plus en plus espacé) ; fermer la fenêtre avec des
+      // modifications non enregistrées demande confirmation
+      const essaisEcriture = useRef(0);
+      const tenterEcriture = async () => {
+        if (remplaceeRef.current || ECRITURE.bloque) return;
+        const texte = texteAEcrire.current;
+        if (!texte || texte === derniereEcrite.current) return;
+        try { await ecrireDonnees(texte); essaisEcriture.current = 0; }
+        catch (e) {
+          if (!erreurEcriture.current) { erreurEcriture.current = true; showToast(`Enregistrement impossible : ${e.message}. Nouvel essai automatique…`); }
+          essaisEcriture.current += 1;
+          clearTimeout(minuterieEcriture.current);
+          minuterieEcriture.current = setTimeout(tenterEcriture, Math.min(60000, 5000 * essaisEcriture.current));
+        }
+      };
+      useEffect(() => {
+        const avantFermeture = (e) => {
+          if (!RELAIS || remplaceeRef.current || ECRITURE.bloque) return;
+          if (texteAEcrire.current && texteAEcrire.current !== derniereEcrite.current) { tenterEcriture(); e.preventDefault(); e.returnValue = ''; }
+        };
+        window.addEventListener('beforeunload', avantFermeture);
+        return () => window.removeEventListener('beforeunload', avantFermeture);
+      }, []);
       useEffect(() => {
         try { localStorage.setItem(CLE_CACHE, JSON.stringify(data)); } catch {}
-        if (!RELAIS || pret !== true || remplaceeRef.current) return;
+        if (!RELAIS || pret !== true || remplaceeRef.current || ECRITURE.bloque) return;
         const texte = JSON.stringify(data);
         texteAEcrire.current = texte;
         if (texte === derniereEcrite.current) return;
+        try { localStorage.setItem(CLE_CACHE + '_brouillon', JSON.stringify({ texte, revision: revision.current, date: new Date().toISOString() })); } catch {}
         clearTimeout(minuterieEcriture.current);
-        minuterieEcriture.current = setTimeout(async () => {
-          if (remplaceeRef.current) return;
-          try { await ecrireDonnees(texte); }
-          catch (e) { if (!erreurEcriture.current) { erreurEcriture.current = true; showToast(`Enregistrement impossible : ${e.message}`); } }
-        }, 700);
+        essaisEcriture.current = 0;
+        minuterieEcriture.current = setTimeout(tenterEcriture, 700);
       }, [data, pret]);
 
       // Le nom affiché dans le sélecteur suit Paramètres (désignation complète si le champ « forme » la contient,
@@ -1144,8 +1247,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const rs = (data.entreprise.raisonSociale || '').trim(), forme = (data.entreprise.forme || '').trim();
         const nom = rs && forme && normNom(forme).includes(normNom(rs)) ? forme : rs;
         const ent = entreprises.find(e => e.id === ENTREPRISE);
-        if (nom && ent && !ent.nomManuel && ent.nom !== nom) appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id: ENTREPRISE, nom }) }).then(r => setEntreprises(r.entreprises)).catch(() => {});
-      }, [data.entreprise.raisonSociale, data.entreprise.forme, pret, entreprises]);
+        const siren = chiffres(data.entreprise.siret).slice(0, 9);
+        if (ent && ent.nom && (ent.siren || '') !== siren && (ent.nomManuel || ent.nom === nom || !nom))
+          appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id: ENTREPRISE, nom: ent.nom, siren }) }).then(r => setEntreprises(r.entreprises)).catch(() => {});
+        else if (nom && ent && !ent.nomManuel && ent.nom !== nom) appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id: ENTREPRISE, nom, siren }) }).then(r => setEntreprises(r.entreprises)).catch(() => {});
+      }, [data.entreprise.raisonSociale, data.entreprise.forme, data.entreprise.siret, pret, entreprises]);
       const indexActive = Math.max(0, entreprises.findIndex(e => e.id === ENTREPRISE));
       useEffect(() => {
         const c = COULEURS_ENTREPRISE[indexActive % COULEURS_ENTREPRISE.length];
@@ -1217,9 +1323,12 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         setMajEnCours({ erreur: "Le Facturier n'a pas redémarré : fermez la fenêtre et rouvrez-le par son icône." });
       };
       const lancerMaj = async (chemin, libelle) => {
+        try { await ECRITURE.maintenant(); }
+        catch (e) { setMajEnCours({ erreur: `Vos dernières modifications n'ont pas pu être enregistrées (${e.message}) : mise à jour annulée, réessayez dans un instant.` }); return; }
+        ECRITURE.bloque = true;
         setMajEnCours({ libelle });
         try { const r = await appelRelais(chemin, { methode: 'POST' }); setMajEnCours({ libelle: `${libelle} : redémarrage…` }); attendreVersion(r.version); }
-        catch (e) { setMajEnCours({ erreur: e.message }); }
+        catch (e) { ECRITURE.bloque = false; setMajEnCours({ erreur: e.message }); }
       };
       const installerMaj = () => lancerMaj('/api/maj', 'Mise à jour en cours');
       const revenirMaj = () => lancerMaj('/api/maj/retour', 'Retour à la version précédente');
@@ -1302,6 +1411,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                   : (<><div className="modal-title" style={{marginBottom: 12}}>{majEnCours.libelle}…</div><p style={{fontSize: 13}}>Ne fermez pas la fenêtre : le Facturier se recharge tout seul dans quelques secondes. Vos données ne sont pas touchées.</p></>)}
               </div></div>
             )}
+            {conflit && (
+              <div className="modal-overlay"><div className="modal">
+                <div className="modal-title" style={{marginBottom: 12}}>Données modifiées ailleurs</div>
+                <p style={{fontSize: 13}}>Les données ont été enregistrées depuis une autre fenêtre du Facturier pendant que celle-ci était ouverte. Pour ne rien écraser, cette fenêtre n'enregistre plus. Rechargez-la pour repartir des données à jour (les modifications faites ici depuis le dernier enregistrement seront à refaire).</p>
+                <div className="btn-group"><button className="btn btn-primary" onClick={() => location.reload()}>Recharger</button></div>
+              </div></div>
+            )}
             {remplacee && (
               <div className="modal-overlay"><div className="modal">
                 <div className="modal-title" style={{marginBottom: 12}}>Le Facturier est ouvert dans une autre fenêtre</div>
@@ -1332,7 +1448,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const importer = (e) => {
         const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
-        reader.onload = (ev) => { try { updateData(migrerDonnees({ ...INITIAL_DATA, ...JSON.parse(ev.target.result) })); showToast('Données importées'); onFini(); } catch { showToast('Erreur : fichier invalide'); } };
+        reader.onload = (ev) => { importerSauvegarde(ev.target.result, { factures: [], entreprise: {} }, updateData, showToast); onFini(); };
         reader.readAsText(file);
       };
       return (
@@ -1725,15 +1841,10 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const file = e.target.files[0];
         if (file) {
           const reader = new FileReader();
-          reader.onload = (event) => {
-            try {
-              const imported = JSON.parse(event.target.result);
-              updateData(migrerDonnees({ ...INITIAL_DATA, ...imported }));
-              showToast('Données importées');
-            } catch { showToast('Erreur: fichier invalide'); }
-          };
+          reader.onload = (event) => importerSauvegarde(event.target.result, data, updateData, showToast);
           reader.readAsText(file);
         }
+        e.target.value = '';
       };
 
       const changeStatut = (factureNumero, newStatut) => {
@@ -2033,6 +2144,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (!simple && (form.prixTransport === '' || form.prixTransport === null)) errs.prixTransport = 'Requis';
         if (form.tauxTVA === '' || form.tauxTVA === null) errs.tauxTVA = 'Requis';
         if (!form.lignes.some(l => l.produitRef)) errs.lignes = 'Au moins un produit';
+        else if (form.lignes.some(l => l.produitRef && !estExceptionnel(l) && (l.prixHT === '' || l.prixHT === undefined || isNaN(parseFloat(l.prixHT)) || parseFloat(l.prixHT) < 0)))
+          errs.lignes = 'Prix unitaire manquant sur une ligne';
         else if (form.lignes.some(l => estExceptionnel(l) && (!String(l.libelle || '').trim() || l.prixHT === '' || isNaN(parseFloat(l.prixHT)) || parseFloat(l.prixHT) < 0)))
           errs.lignes = simple ? 'Chaque ligne : un intitulé et un prix' : 'Produit exceptionnel : indiquez un intitulé et un prix'
         setErrors(errs);
@@ -2042,7 +2155,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const saveFacture = () => {
         if (!validate()) { showToast('Champs obligatoires manquants'); return; }
         const { vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles } = calculs();
-        const facture = { ...form, lignes: figerLignes(form, data), client: data.clients.find(c => c.numero === form.clientId), vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles, updatedAt: new Date().toISOString() };
+        const facture = { ...form, mode: estSimple(data) ? 'simple' : 'complet', lignes: figerLignes(form, data), client: data.clients.find(c => c.numero === form.clientId), vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles, updatedAt: new Date().toISOString() };
         if (editIndex !== null) {
           const updated = [...data.factures]; updated[editIndex] = facture;
           updateData({ factures: updated });
@@ -2086,6 +2199,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const restoreFacture = (index) => {
         const f = data.facturesSupprimes[index];
+        if (data.factures.some(x => x.numero === f.numero)) { showToast(`Impossible : une autre facture active porte déjà le n° ${f.numero}`); return; }
         const { deletedAt, ...rest } = f;
         updateData({
           facturesSupprimes: data.facturesSupprimes.filter((_, i) => i !== index),
@@ -2141,7 +2255,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                     ? <div className="alerte-info">SIREN manquant pour ce client : à compléter dans sa fiche (onglet Clients) pour pouvoir produire la facture électronique.</div>
                     : c && clientUE(c) ? (!tvaNormalisee(c) ? <div className="alerte-info">N° de TVA manquant pour ce client de l'Union européenne : sans lui, la vente ne peut pas être faite sans TVA.</div>
                       : !viesAJour(c) ? <div className="alerte-info">N° de TVA de ce client pas encore vérifié dans VIES : vérifiez-le depuis sa fiche (onglet Clients).</div>
-                      : !viesAJour(c).valide ? <div className="alerte-info">N° de TVA de ce client inconnu de VIES (vérifié le {dateFr(viesAJour(c).date)}) : à corriger avant de facturer sans TVA.</div> : null) : null; })()}
+                      : !viesAJour(c).valide ? <div className="alerte-info">N° de TVA de ce client inconnu de VIES (vérifié le {dateFr(viesAJour(c).date)}) : à corriger avant de facturer sans TVA.</div>
+                      : viesAJour(c).demandeur && viesAJour(c).demandeur !== String(data.entreprise.tvaIntra || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+                        ? <div className="alerte-info">N° de TVA vérifié par une autre de vos entreprises : revérifiez-le depuis la fiche du client pour avoir la preuve (n° de consultation) au nom de celle-ci.</div> : null) : null; })()}
                 </div>
                 <div className="form-group"><label>Date</label><input type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></div>
                 <div className="form-group"><label>Échéance</label><input type="date" value={form.echeance} onChange={e => setForm({...form, echeance: e.target.value})} /></div>
@@ -2902,7 +3018,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const { _cle, _cleL, _ancienneGardee, ...rest } = modal;
         const livraison = modal.livraison && modal.livraison.adresse ? modal.livraison : null;
         const enseigne = particulier ? '' : (String(modal.enseigne || '').trim() || modal.nom);
-        const client = { ...rest, siren, enseigne, livraison, tvaIntra: estFrance(modal) ? (modal.tvaIntra || '').replace(/\s/g, '').toUpperCase() : tvaNormalisee(modal) };
+        const client = { ...rest, siren, enseigne, livraison, tvaIntra: estFrance(modal) ? (modal.tvaIntra || '').replace(/\s/g, '').toUpperCase() : tvaNormalisee(modal),
+          uid: rest.uid || (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').slice(0, 16) : Math.random().toString(16).slice(2) + Date.now().toString(16)) };
         if (editIndex !== null) { const updated = [...clients]; updated[editIndex] = client; updateData({ clients: updated }); showToast('Client modifié'); } else { updateData({ clients: [...data.clients, client] }); showToast('Client ajouté'); } setModal(null);
       };
       const demanderSuppression = (index) => {
@@ -3085,7 +3202,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       return (
         <div className="card">
           <div className="card-title">Entreprises</div>
-          <p style={{fontSize: 13, marginBottom: 10}}>Chaque entreprise a ses propres clients, factures, numérotation, sauvegardes et connexion Super PDP. On passe de l'une à l'autre par le menu en haut à gauche.</p>
+          <p style={{fontSize: 13, marginBottom: 10}}>Chaque entreprise a ses propres factures, numérotation, sauvegardes et connexion Super PDP ; les clients sont communs. On passe de l'une à l'autre par le menu en haut à gauche.</p>
+          {(() => { const s = ctx.liste.map(e => e.siren).filter(Boolean); return s.length !== new Set(s).size
+            ? <div className="vies vies-ko" style={{marginBottom: 10}}>Deux entreprises ont le même SIREN : vérifiez le SIRET de chacune dans ses Paramètres. Sinon, les factures de l'une pourraient partir au nom de l'autre.</div> : null; })()}
           <table className="liste-entreprises"><tbody>
             {ctx.liste.map((e, i) => (
               <tr key={e.id}><td style={{width: 14}}><span style={{display: 'inline-block', width: 10, height: 10, borderRadius: 5, background: COULEURS_ENTREPRISE[i % COULEURS_ENTREPRISE.length]}} /></td>
@@ -3156,15 +3275,10 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const file = e.target.files[0];
         if (file) {
           const reader = new FileReader();
-          reader.onload = (event) => {
-            try {
-              const imported = JSON.parse(event.target.result);
-              updateData(migrerDonnees({ ...INITIAL_DATA, ...imported }));
-              showToast('Données importées');
-            } catch { showToast('Erreur: fichier invalide'); }
-          };
+          reader.onload = (event) => importerSauvegarde(event.target.result, data, updateData, showToast);
           reader.readAsText(file);
         }
+        e.target.value = '';
       };
 
       return (

@@ -39,6 +39,10 @@ PLUSIEURS ENTREPRISES
   l'est partout. Dans la liste, une pastille indique chez quelle entreprise le client a des factures.
   Un client qui a des factures ne peut pas être mis à la corbeille.
 - Une seule fenêtre du Facturier travaille à la fois : en ouvrir une deuxième désactive la première.
+- Importer une sauvegarde (Paramètres > Sauvegarde & Export > Importer) remplace les factures et produits de
+  l'entreprise ouverte, après confirmation et copie de sécurité ; elle est refusée si la sauvegarde est celle
+  d'une autre entreprise. Les fiches clients existantes ne sont pas modifiées (les nouvelles sont ajoutées).
+- Si la fenêtre se ferme avant le dernier enregistrement, les modifications sont reprises à la réouverture.
 - Paramètres > Sauvegarde & Export : « Sauvegarde complète » regroupe toutes les entreprises dans un seul
   fichier zip ; Excel et JSON ne concernent que l'entreprise ouverte.
 
