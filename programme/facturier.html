@@ -1091,13 +1091,15 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         }, 700);
       }, [data, pret]);
 
-      // Le nom affiché dans le sélecteur suit la raison sociale saisie dans Paramètres
+      // Le nom affiché dans le sélecteur suit Paramètres (désignation complète si le champ « forme » la contient,
+      // ex. « SAS SIMON ROUILLARD »), sauf s'il a été choisi à la main (Paramètres > Entreprises > Renommer)
       useEffect(() => {
         if (!RELAIS || pret !== true) return;
-        const nom = (data.entreprise.raisonSociale || '').trim();
+        const rs = (data.entreprise.raisonSociale || '').trim(), forme = (data.entreprise.forme || '').trim();
+        const nom = rs && forme && normNom(forme).includes(normNom(rs)) ? forme : rs;
         const ent = entreprises.find(e => e.id === ENTREPRISE);
-        if (nom && ent && ent.nom !== nom) appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id: ENTREPRISE, nom }) }).then(r => setEntreprises(r.entreprises)).catch(() => {});
-      }, [data.entreprise.raisonSociale, pret, entreprises]);
+        if (nom && ent && !ent.nomManuel && ent.nom !== nom) appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id: ENTREPRISE, nom }) }).then(r => setEntreprises(r.entreprises)).catch(() => {});
+      }, [data.entreprise.raisonSociale, data.entreprise.forme, pret, entreprises]);
       const indexActive = Math.max(0, entreprises.findIndex(e => e.id === ENTREPRISE));
       useEffect(() => {
         const c = COULEURS_ENTREPRISE[indexActive % COULEURS_ENTREPRISE.length];
@@ -1109,7 +1111,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         try { sessionStorage.setItem('facturier_nouvelle_entreprise', JSON.stringify({ mode, prefixe })); } catch {}
         changerEntreprise(r.entreprise.id);
       };
-      const ctxEntreprise = { liste: entreprises, active: ENTREPRISE, ajouter: ajouterEntreprise };
+      const renommerEntreprise = async (id, nom) => {
+        const r = await appelRelais('/api/entreprises/nom', { methode: 'POST', type: 'application/json', corps: JSON.stringify({ id, nom, manuel: true }) });
+        setEntreprises(r.entreprises);
+      };
+      const ctxEntreprise = { liste: entreprises, active: ENTREPRISE, ajouter: ajouterEntreprise, renommer: renommerEntreprise };
       const nomEntreprise = (e, i) => e.nom || (e.id === 'principale' ? 'Entreprise principale' : `Entreprise ${i + 1}`);
 
       // Connexion à Super PDP via le relais local
@@ -3055,7 +3061,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const ctx = React.useContext(EntrepriseCtx);
       const [form, setForm] = useState(null);
       const [erreur, setErreur] = useState('');
+      const [edition, setEdition] = useState(null);
       if (!RELAIS) return null;
+      const renommer = async () => { if (!edition.nom.trim()) return; try { await ctx.renommer(edition.id, edition.nom.trim()); setEdition(null); } catch (e) { setErreur(e.message); } };
       const valider = async () => {
         if (!form.nom.trim()) { setErreur('Nom obligatoire'); return; }
         const pref = form.prefixe.trim().toUpperCase();
@@ -3069,7 +3077,10 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           <table className="liste-entreprises"><tbody>
             {ctx.liste.map((e, i) => (
               <tr key={e.id}><td style={{width: 14}}><span style={{display: 'inline-block', width: 10, height: 10, borderRadius: 5, background: COULEURS_ENTREPRISE[i % COULEURS_ENTREPRISE.length]}} /></td>
-                <td><strong>{e.nom || (e.id === 'principale' ? 'Entreprise principale' : e.id)}</strong>{e.id === 'principale' && <span style={{color: 'var(--text-muted)'}}> — principale</span>}</td>
+                <td>{edition && edition.id === e.id
+                  ? <span style={{display: 'flex', gap: 8}}><input autoFocus value={edition.nom} onChange={ev => setEdition({...edition, nom: ev.target.value})} onKeyDown={ev => { if (ev.key === 'Enter') renommer(); if (ev.key === 'Escape') setEdition(null); }} /><button className="btn btn-primary" onClick={renommer}>OK</button></span>
+                  : <><strong>{e.nom || (e.id === 'principale' ? 'Entreprise principale' : e.id)}</strong>{e.id === 'principale' && <span style={{color: 'var(--text-muted)'}}> — principale</span>}{' '}
+                    <span className="manual-toggle" style={{marginLeft: 8}} onClick={() => setEdition({ id: e.id, nom: e.nom || '' })}>Renommer</span></>}</td>
                 <td style={{textAlign: 'right'}}>{e.id === ctx.active ? <span style={{color: 'var(--text-muted)'}}>ouverte</span> : <button className="btn btn-outline" onClick={() => changerEntreprise(e.id)}>Ouvrir</button>}</td></tr>
             ))}
           </tbody></table>

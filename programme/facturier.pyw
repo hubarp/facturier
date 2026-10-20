@@ -29,7 +29,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.20-4"
+VERSION = "2026.10.20-5"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 DONNEES = Path(os.environ.get("FACTURIER_DONNEES") or ICI.parent / "donnees")
 PORT = int(os.environ.get("FACTURIER_PORT", "8765"))
@@ -713,6 +713,8 @@ def act_nommer_entreprise(_q, corps):
         for e in liste:
             if e["id"] == ident:
                 e["nom"] = nom
+                if d.get("manuel"):
+                    e["nomManuel"] = True   # nom choisi à la main : n'est plus recopié depuis Paramètres
         ecrire_entreprises(liste)
     return {"entreprises": liste}
 

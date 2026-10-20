@@ -1,11 +1,11 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.20-4",
-  "notes": "Nouveau : importer un client depuis une autre entreprise (Clients > « Importer d'une autre entreprise »).\nNouveau : sauvegarde complète de toutes les entreprises en un seul fichier (Paramètres > Sauvegarde & Export).",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-4.zip",
-  "sha256": "73df9bf0e010b6ce4f01a9195b8e2bd866dc0f9d71c2c1728bf7c91f6c98cf0b",
-  "taille": 106673
+  "version": "2026.10.20-5",
+  "notes": "Le nom des entreprises dans le menu reprend la désignation complète (ex. SAS SIMON ROUILLARD) et peut se changer dans Paramètres > Entreprises > Renommer.",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-5.zip",
+  "sha256": "fb350471d7162efa74be7a678dc2d3560783408f46f24c3e9a03035be7612a3d",
+  "taille": 107117
  },
- "signature": "4836e1b15270956e9e8e203456b4a56d5e4d72ab2db00e2b2ed861038e563c6bd6f49b819d5d2a99e58253ac196a78fd2dff19b8461980f874bfaea245969a04"
+ "signature": "012e23efee932bda25e22414182c3b7949a3b6bed51e3f2b2ff120589137d86072732a647db173f7eb4f12216bfc45ade6b1fdcd7d3b31f507846d5ddc58c203"
 }
