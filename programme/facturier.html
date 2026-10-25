@@ -4,13 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Facturier</title>
-  <!-- Bibliothèques en version exacte, avec leur empreinte (integrity) : un fichier modifié sur le serveur est refusé par le navigateur.
-       Changer de version = recalculer l'empreinte (openssl dgst -sha384 -binary fichier | openssl base64 -A). -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" integrity="sha384-1qlE7MZPM2pHD/pBZCU/yB8UCP52RYL8bge/qNdfNBCWToySp8/M+JL2waXU4hjJ" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -282,15 +275,128 @@
 </head>
 <body>
   <div id="root"></div>
+  <div id="secours-bibliotheques" hidden style="font:16px sans-serif;margin:3em;max-width:44em;line-height:1.5"></div>
   <script>
-    // Sans les bibliothèques (pas d'internet, ou fichier refusé car modifié) : message lisible au lieu d'une page blanche
-    window.addEventListener('load', () => {
-      if (window.React && window.ReactDOM && window.Babel) return;
-      const p = document.createElement('p');
-      p.style.cssText = 'font:16px sans-serif;margin:3em;max-width:40em;line-height:1.5';
-      p.textContent = "Le Facturier n'a pas pu charger ses composants depuis internet. Vérifiez la connexion, puis fermez cette fenêtre et rouvrez le Facturier. Si le message revient alors qu'internet fonctionne, prévenez Antoine. Vos données ne sont pas touchées.";
-      document.getElementById('root').appendChild(p);
-    });
+    // Bibliothèques : version exacte et empreinte (integrity) ; un fichier modifié est refusé par le navigateur.
+    // Servies d'abord par jsDelivr (/npm/), qui sert à l'octet près les fichiers des paquets npm sur lesquels les
+    // empreintes ont été calculées, puis par unpkg (mêmes fichiers npm) si jsDelivr ne répond pas ou est refusé.
+    // Changer de version = recalculer l'empreinte (openssl dgst -sha384 -binary fichier | openssl base64 -A).
+    window.BIBLIOTHEQUES = {
+      react: ['react@18.2.0/umd/react.production.min.js', 'sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8'],
+      reactDom: ['react-dom@18.2.0/umd/react-dom.production.min.js', 'sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh'],
+      babel: ['@babel/standalone@7.23.5/babel.min.js', 'sha384-1qlE7MZPM2pHD/pBZCU/yB8UCP52RYL8bge/qNdfNBCWToySp8/M+JL2waXU4hjJ'],
+      xlsx: ['xlsx@0.18.5/dist/xlsx.full.min.js', 'sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw'],
+      jszip: ['jszip@3.10.1/dist/jszip.min.js', 'sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG'],
+      pdflib: ['pdf-lib@1.17.1/dist/pdf-lib.min.js', 'sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI'],
+      fontkit: ['@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js', 'sha384-2p6U+1mmqF10USehFeRiyG2ESG9FwIqN+jxULn5w9jjQIihSn9Pt13dVCn/Hawjn'],
+      police: ['@expo-google-fonts/arimo@0.4.3/400Regular/Arimo_400Regular.ttf', 'sha384-cHgouPgjXHKEOSNRjpHh2tXcVMH4UGugArbYamYqlxUvaiBJES9libLcLU0vUgZd'],
+      policeGras: ['@expo-google-fonts/arimo@0.4.3/700Bold/Arimo_700Bold.ttf', 'sha384-9a/9rCESWKmmcbyjNR5cnpoBLSgs/ZvzKmsJlucmNCWOEA0gBCA9vNTDienWervG']
+    };
+    window.SOURCES_BIBLIOTHEQUES = ['https://cdn.jsdelivr.net/npm/', 'https://unpkg.com/'];
+    // Texte de confirmation du retour arrière (aussi utilisé par la page) : une version d'avant 2026.10.25-1 ne sait
+    // pas lire le secret Super PDP chiffré par Windows
+    window.texteRetourVersion = (v) => {
+      const n = (x) => (String(x).match(/\d+/g) || []).map(Number), a = n(v), b = [2026, 10, 25, 1];
+      let avant = false;
+      for (let i = 0; i < 4; i++) { if ((a[i] || 0) !== b[i]) { avant = (a[i] || 0) < b[i]; break; } }
+      return `Revenir à la version ${v} ? Vos données ne sont pas modifiées.` + (avant ? `\n\nAttention : sous Windows, la version ${v} ne sait pas lire la clé Super PDP chiffrée par cette version. Il faudra ressaisir l'identifiant et le secret Super PDP (Paramètres > Connexion Super PDP).` : '');
+    };
+    (function () {
+      const B = window.BIBLIOTHEQUES, SOURCES = window.SOURCES_BIBLIOTHEQUES, enCours = {};
+      const unScript = (url, integrity) => new Promise((ok, ko) => {
+        const s = document.createElement('script');
+        s.src = url; s.integrity = integrity; s.crossOrigin = 'anonymous';
+        s.onload = () => ok();
+        s.onerror = () => { s.remove(); ko(new Error('Chargement impossible : ' + url)); };   // balise refusée retirée avant l'essai suivant
+        document.head.appendChild(s);
+      });
+      // Une bibliothèque : chaque source à son tour ; un échec complet peut être retenté plus tard (rien n'est gardé)
+      window.chargerBibliotheque = (nom) => enCours[nom] || (enCours[nom] = (async () => {
+        const [chemin, integrity] = B[nom];
+        let erreur;
+        for (const base of SOURCES) {
+          try { await unScript(base + chemin, integrity); return; } catch (e) { erreur = e; }
+        }
+        throw erreur;
+      })().catch((e) => { delete enCours[nom]; throw e; }));
+      // Un fichier (police) : même ordre des sources, même contrôle d'empreinte
+      window.chargerFichier = async (nom) => {
+        const [chemin, integrity] = B[nom];
+        let erreur;
+        for (const base of SOURCES) {
+          try { const r = await fetch(base + chemin, { integrity }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.arrayBuffer(); }
+          catch (e) { erreur = e; }
+        }
+        throw erreur || new Error('Fichier indisponible : ' + chemin);
+      };
+      // Message de secours, sans React : le poste reste réparable à distance (mise à jour ou retour arrière)
+      const relais = async (chemin, methode = 'GET') => {
+        const r = await fetch(chemin, { method: methode, headers: { 'X-Facturier': (window.RELAIS || {}).jeton || '', 'X-Entreprise': 'principale' } });
+        let j = {};
+        try { j = await r.json(); } catch (e) {}
+        if (!r.ok) throw new Error(j.erreur || ('Erreur ' + r.status));
+        return j;
+      };
+      const secours = (erreur) => {
+        const zone = document.getElementById('secours-bibliotheques');
+        if (!zone || !zone.hidden) return;
+        zone.hidden = false;
+        const p = document.createElement('p');
+        p.textContent = "Le Facturier n'a pas pu charger ses composants depuis internet. Vérifiez la connexion, puis fermez cette fenêtre et rouvrez le Facturier. Si le message revient alors qu'internet fonctionne, prévenez Antoine. Vos données ne sont pas touchées.";
+        zone.appendChild(p);
+        if (erreur) { const d = document.createElement('p'); d.style.cssText = 'font-size:12px;color:#718096;margin-top:6px'; d.textContent = 'Détail : ' + (erreur.message || erreur); zone.appendChild(d); }
+        if (!window.RELAIS) return;
+        const etat = document.createElement('p'); etat.style.cssText = 'margin-top:12px;font-size:14px';
+        const bouton = (texte, action) => {
+          const b = document.createElement('button'); b.type = 'button'; b.textContent = texte;
+          b.style.cssText = 'font:14px sans-serif;margin:16px 12px 0 0;padding:8px 14px;cursor:pointer';
+          b.onclick = async () => { b.disabled = true; try { await action(); } catch (e) { etat.textContent = e.message; } finally { b.disabled = false; } };
+          zone.appendChild(b);
+        };
+        const attendre = async (version) => {
+          for (let i = 0; i < 90; i++) {
+            await new Promise((ok) => setTimeout(ok, 1000));
+            try { const v = await (await fetch('/version', { cache: 'no-store' })).json(); if (v.version === version) { location.reload(); return; } } catch (e) {}
+          }
+          etat.textContent = "Le Facturier n'a pas redémarré : fermez la fenêtre et rouvrez-le par son icône.";
+        };
+        bouton('Rechercher et installer une mise à jour', async () => {
+          etat.textContent = 'Recherche…';
+          const m = await relais('/api/maj');
+          if (!m.disponible) { etat.textContent = m.erreur || `Aucune nouvelle version (version installée : ${m.actuelle}).`; return; }
+          if (!confirm(`Installer la version ${m.disponible.version} ?`)) { etat.textContent = ''; return; }
+          etat.textContent = 'Mise à jour en cours…';
+          const r = await relais('/api/maj', 'POST');
+          etat.textContent = 'Mise à jour installée : le Facturier redémarre…';
+          attendre(r.version);
+        });
+        bouton('Revenir à la version précédente', async () => {
+          const m = await relais('/api/maj');
+          if (!m.precedente) { etat.textContent = 'Aucune version précédente à restaurer.'; return; }
+          if (!confirm(window.texteRetourVersion(m.precedente))) return;
+          etat.textContent = 'Retour en cours…';
+          const r = await relais('/api/maj/retour', 'POST');
+          etat.textContent = `Retour à la version ${r.version} : le Facturier redémarre…`;
+          attendre(r.version);
+        });
+        zone.appendChild(etat);
+      };
+      const demarrer = async () => {
+        const minuterie = setTimeout(() => secours(new Error('les composants mettent trop de temps à arriver')), 45000);
+        try {
+          await window.chargerBibliotheque('react');
+          await window.chargerBibliotheque('reactDom');
+          await Promise.all(['babel', 'xlsx', 'jszip'].map(window.chargerBibliotheque));
+          if (!(window.React && window.ReactDOM && window.Babel && window.XLSX && window.JSZip)) throw new Error('bibliothèque incomplète');
+        } catch (e) { clearTimeout(minuterie); secours(e); return; }
+        clearTimeout(minuterie);
+        const zone = document.getElementById('secours-bibliotheques');
+        if (zone) { zone.hidden = true; zone.textContent = ''; }
+        window.Babel.transformScriptTags();    // chargée après DOMContentLoaded : la page est compilée ici, une seule fois
+      };
+      // Chargement lancé après DOMContentLoaded : Babel ne compile donc jamais la page de lui-même (pas de double départ)
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer); else demarrer();
+    })();
   </script>
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
@@ -668,28 +774,9 @@
     };
 
     // ===== Facture électronique Factur-X (profil EN 16931, règles françaises XP Z12-012) =====
-    const FX_LIBS = {
-      pdflib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js',
-      fontkit: 'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
-      police: 'https://cdn.jsdelivr.net/npm/@expo-google-fonts/arimo@0.4.3/400Regular/Arimo_400Regular.ttf',
-      policeGras: 'https://cdn.jsdelivr.net/npm/@expo-google-fonts/arimo@0.4.3/700Bold/Arimo_700Bold.ttf'
-    };
-    // Empreintes des fichiers ci-dessus (identiques aux paquets npm de même version) : un fichier modifié est refusé
-    const FX_SRI = {
-      [FX_LIBS.pdflib]: 'sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI',
-      [FX_LIBS.fontkit]: 'sha384-2p6U+1mmqF10USehFeRiyG2ESG9FwIqN+jxULn5w9jjQIihSn9Pt13dVCn/Hawjn',
-      [FX_LIBS.police]: 'sha384-cHgouPgjXHKEOSNRjpHh2tXcVMH4UGugArbYamYqlxUvaiBJES9libLcLU0vUgZd',
-      [FX_LIBS.policeGras]: 'sha384-9a/9rCESWKmmcbyjNR5cnpoBLSgs/ZvzKmsJlucmNCWOEA0gBCA9vNTDienWervG'
-    };
     // Profil de couleurs sRGB (exigé par la norme PDF/A)
     const SRGB_ICC_B64 = 'AAACTGxjbXMEQAAAbW50clJHQiBYWVogB+oACgASAAoABQAfYWNzcEFQUEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1sY21zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALZGVzYwAAAQgAAAA2Y3BydAAAAUAAAABMd3RwdAAAAYwAAAAUY2hhZAAAAaAAAAAsclhZWgAAAcwAAAAUYlhZWgAAAeAAAAAUZ1hZWgAAAfQAAAAUclRSQwAAAggAAAAgZ1RSQwAAAggAAAAgYlRSQwAAAggAAAAgY2hybQAAAigAAAAkbWx1YwAAAAAAAAABAAAADGVuVVMAAAAaAAAAHABzAFIARwBCACAAYgB1AGkAbAB0AC0AaQBuAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAADAAAAAcAE4AbwAgAGMAbwBwAHkAcgBpAGcAaAB0ACwAIAB1AHMAZQAgAGYAcgBlAGUAbAB5WFlaIAAAAAAAAPbWAAEAAAAA0y1zZjMyAAAAAAABDEIAAAXe///zJQAAB5MAAP2Q///7of///aIAAAPcAADAblhZWiAAAAAAAABvoAAAOPUAAAOQWFlaIAAAAAAAACSfAAAPhAAAtsNYWVogAAAAAAAAYpcAALeHAAAY2XBhcmEAAAAAAAMAAAACZmYAAPKnAAANWQAAE9AAAApbY2hybQAAAAAAAwAAAACj1wAAVHsAAEzNAACZmgAAJmYAAA9c';
     const TAUX_TVA_FR = [20, 10, 5.5, 2.1];
-
-    const chargerScript = (url) => new Promise((ok, ko) => {
-      if (document.querySelector(`script[src="${url}"]`)) return ok();
-      const s = document.createElement('script'); s.src = url; s.integrity = FX_SRI[url]; s.crossOrigin = 'anonymous'; s.onload = ok; s.onerror = () => ko(new Error('Chargement impossible : ' + url));
-      document.head.appendChild(s);
-    });
 
     // Ce qui empêche de produire une facture électronique (liste vide = OK)
     // bacASable : compte de test Super PDP, dont les numéros fictifs ne respectent pas la clé de contrôle
@@ -806,10 +893,10 @@ ${t.lignes.map((l, i) => `    <ram:IncludedSupplyChainTradeLineItem>
 
     // PDF/A-3 lisible + XML embarqué = Factur-X
     const genererFacturX = async (f, data) => {
-      await chargerScript(FX_LIBS.pdflib);
-      await chargerScript(FX_LIBS.fontkit);
+      await window.chargerBibliotheque('pdflib');
+      await window.chargerBibliotheque('fontkit');
       const { PDFDocument, rgb, PDFName, PDFHexString, PDFString, AFRelationship } = window.PDFLib;
-      const [ttf, ttfB] = await Promise.all([FX_LIBS.police, FX_LIBS.policeGras].map(u => fetch(u, { integrity: FX_SRI[u] }).then(r => { if (!r.ok) throw new Error('Police indisponible'); return r.arrayBuffer(); })));
+      const [ttf, ttfB] = await Promise.all(['police', 'policeGras'].map(n => window.chargerFichier(n).catch(() => { throw new Error('Police indisponible'); })));
 
       const e = vendeurDe(f, data);
       const md = modeleFacture(f, data);
@@ -1607,7 +1694,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           <div className="btn-group">
             {m.disponible && <button className="btn btn-primary" onClick={cx.installerMaj}>Mettre à jour</button>}
             <button className="btn btn-outline" onClick={chercher} disabled={recherche}>{recherche ? 'Recherche…' : 'Rechercher une mise à jour'}</button>
-            {m.precedente && <button className="btn btn-outline" onClick={() => { if (window.confirm(`Revenir à la version ${m.precedente} ? Vos données ne sont pas modifiées.`)) cx.revenirMaj(); }}>Revenir à la version {m.precedente}</button>}
+            {m.precedente && <button className="btn btn-outline" onClick={() => { if (window.confirm(window.texteRetourVersion(m.precedente))) cx.revenirMaj(); }}>Revenir à la version {m.precedente}</button>}
           </div>
           <p style={{fontSize: 12, color: 'var(--text-muted)', marginTop: 8}}>Chaque version est signée par Antoine : le Facturier refuse toute version dont la signature n'est pas valide. Vos données sont sauvegardées avant chaque mise à jour.</p>
         </div>
