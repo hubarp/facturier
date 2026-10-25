@@ -7,9 +7,11 @@ avec les identifiants, qui restent sur ce PC et ne sont jamais envoyés au navig
 Python 3.9 ou plus récent, sans module supplémentaire. Lancé par le raccourci « Facturier »
 (créé par « Installer le Facturier.bat »). Reste actif, invisible, jusqu'à la fermeture de la session Windows.
 """
+import os
 import sys
 
-if __name__ == "__main__" and not sys.flags.isolated and sys.path and sys.path[0]:
+if __name__ == "__main__" and not sys.flags.isolated and sys.path and \
+        os.path.normcase(os.path.abspath(sys.path[0] or ".")) == os.path.normcase(os.path.dirname(os.path.abspath(__file__))):
     del sys.path[0]   # lancé sans « -I » (raccourci d'une ancienne installation) : aucun module pris dans « programme »
 
 import base64
@@ -18,7 +20,6 @@ import hmac
 import http.client
 import io
 import json
-import os
 import re
 import secrets
 import shutil
