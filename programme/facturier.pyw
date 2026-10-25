@@ -581,7 +581,7 @@ def act_vies(_q, corps):
     if err:
         journal(f"VIES {pays}{num} : erreur {err}")
         raise ErreurAPI(502 if err not in ("INVALID_INPUT", "VAT_BLOCKED") else 400, ERREURS_VIES.get(err, f"VIES a répondu : {err}"))
-    valide = bool(rep.get("valid"))
+    valide = rep.get("valid") is True  # VIES renvoie un booléen JSON ; tout autre type = non valide
     journal(f"VIES {pays}{num} : {'valide' if valide else 'invalide'}")
     return {"pays": pays, "numero": num, "valide": valide, "nom": _texte_vies(rep.get("name")),
             "adresse": _texte_vies(rep.get("address")), "consultation": "" if sans_preuve else str(rep.get("requestIdentifier") or ""),
