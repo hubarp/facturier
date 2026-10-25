@@ -11,8 +11,8 @@ INSTALLATION (une seule fois)
    Windows peut afficher « Windows a protégé votre ordinateur » (SmartScreen) : c'est attendu, le fichier
    n'a pas de signature d'éditeur. Si l'archive vient bien d'Antoine, cliquez « Informations complémentaires »
    puis « Exécuter quand même ».
-   L'installation met Python si besoin (quelques minutes), puis crée l'icône « Facturier »
-   sur le bureau et dans le menu Démarrer, et ouvre le Facturier.
+   Python est installé si besoin (quelques minutes), puis l'icône « Facturier » est créée
+   sur le bureau et dans le menu Démarrer, et le Facturier s'ouvre.
 4. Au premier lancement, cliquez sur « Importer ma sauvegarde » et choisissez le fichier de l'étape 1.
 5. Pour envoyer les factures électroniques : Paramètres > Connexion Super PDP,
    collez l'identifiant et le secret de l'application créée dans votre compte Super PDP.

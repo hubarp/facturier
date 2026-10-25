@@ -159,7 +159,7 @@ def controler_archive(donnees, version):
     ro = lecture_seule(io.BytesIO(donnees))
     if ro:
         arreter(f"fichier(s) en lecture seule dans l'archive : {ro}. Les postes ne pourraient plus se mettre à jour.\n"
-                "Refaites l'archive avec « git archive » (voir la procédure).")
+                "Refaites les archives avec : python signer_version.py archives <version>")
     with zipfile.ZipFile(io.BytesIO(donnees)) as z:
         noms = z.namelist()
         if len(noms) != len(set(noms)) or not set(noms) <= FICHIERS_PROGRAMME | {RATTRAPAGE} or not {"facturier.pyw", "facturier.html"} <= set(noms):

@@ -871,10 +871,13 @@ def finir_installation():
                 (ICI / (nom + ".tmp")).unlink()
         for nom in FICHIERS_PROGRAMME:
             rendre_modifiable(ICI / nom)      # postes installés depuis une archive qui posait « lecture seule »
-        if (ICI / RATTRAPAGE).exists():       # page livrée à côté par un ancien programme bloqué : mise en place
+        if (ICI / RATTRAPAGE).exists():       # page livrée à côté par un ancien programme (bloqué ou non)
             rendre_modifiable(ICI / RATTRAPAGE)
-            os.replace(ICI / RATTRAPAGE, ICI / "facturier.html")
-            journal("Page du Facturier mise en place (rattrapage « lecture seule »)")
+            if (ICI / "facturier.html").exists() and (ICI / RATTRAPAGE).read_bytes() == (ICI / "facturier.html").read_bytes():
+                (ICI / RATTRAPAGE).unlink()   # poste non bloqué : la page est déjà la bonne, la copie ne sert à rien
+            else:
+                os.replace(ICI / RATTRAPAGE, ICI / "facturier.html")
+                journal("Page du Facturier mise en place (rattrapage « lecture seule »)")
     except OSError as e:
         journal(f"Remise en ordre des fichiers du programme impossible : {e!r}")
     return pyw_remplace
