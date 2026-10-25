@@ -64,7 +64,10 @@ def nouveau_code():
     return code
 HOTES = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
 ORIGINES = {f"http://{h}" for h in HOTES}
+# Rejet (technique) : la facture est réputée non émise, elle peut être corrigée et redéposée sous le même numéro.
+# Refus (fr:210, décision du client) : la facture est close ; elle ne se renvoie jamais (avoir + nouvelle facture).
 STATUTS_ECHEC = {"fr:213", "api:invalid", "api:rejected", "fr:501"}
+STATUT_REFUS = "fr:210"
 
 
 # ---------------------------------------------------------------- outils
@@ -126,6 +129,10 @@ def fichier_donnees(ident=None):
 
 def dossier_sauvegardes(ident=None):
     return dossier(ident) / "sauvegardes"
+
+
+def fichier_envois():
+    return dossier() / "envois.json"            # numéro -> empreinte du contenu déposé (jamais touché par un import)
 
 
 def fichier_ids():
@@ -348,16 +355,36 @@ def act_envoyer(q, corps):
     if isinstance(sess, dict) and sess.get("company_verification_status") not in (None, "verified"):
         raise ErreurAPI(409, f"Entreprise pas encore vérifiée par Super PDP (statut : {sess.get('company_verification_status')}) : terminez la vérification avant d'envoyer")
     # Pas de double envoi : une facture déjà déposée avec ce numéro et non rejetée est renvoyée telle quelle
+    # Empreinte du contenu (XML Factur-X, calculée par la page) : un même numéro avec un autre contenu n'est jamais
+    # confondu avec la facture déjà déposée. Le registre local est écrit AVANT le dépôt (délai dépassé compris).
+    emp = re.sub(r"[^0-9a-f]", "", q.get("empreinte", [""])[0].lower())[:64]
+    registre = lire_json(fichier_envois(), {}) or {}
+    connu = registre.get(numero) or {}
     recentes = SPDP.json("GET", "invoices", params={"direction": "out", "order": "desc", "limit": 200, "expand[]": "events"})
     for fac in recentes.get("data", []) if isinstance(recentes, dict) else []:
-        if fac.get("external_id") == numero and not ({e.get("status_code") for e in fac.get("events") or []} & STATUTS_ECHEC):
-            journal(f"Envoi {numero} ignoré : déjà déposée (id {fac.get('id')})")
-            return {"envoye": True, "deja": True, "facture": fac}
+        if fac.get("external_id") != numero:
+            continue
+        codes = {e.get("status_code") for e in fac.get("events") or []}
+        if STATUT_REFUS in codes:
+            raise ErreurAPI(409, f"La facture {numero} a été refusée par le client : elle ne peut pas être renvoyée. "
+                                 "Annulez-la par un avoir et faites une nouvelle facture (nouveau numéro).")
+        if codes & STATUTS_ECHEC:
+            continue
+        if emp and connu.get("empreinte") != emp:
+            # contenu corrigé après un envoi resté sans réponse, ou numéro réutilisé (sauvegarde ancienne, autre PC)
+            raise ErreurAPI(409, f"Le n° {numero} est déjà utilisé sur Super PDP (facture id {fac.get('id')}) par une facture "
+                                 "différente de celle-ci : rien n'a été envoyé. Vérifiez la numérotation ; une correction se fait par avoir.")
+        journal(f"Envoi {numero} ignoré : déjà déposée (id {fac.get('id')})")
+        return {"envoye": True, "deja": True, "facture": fac}
     val = act_valider({"nom": [f"{numero}.pdf"]}, corps)
     if not val["valide"]:
         journal(f"Envoi {numero} refusé par la validation : {len(val['erreurs'])} erreur(s)")
         return {"envoye": False, "erreurs": val["erreurs"]}
+    registre[numero] = {"empreinte": emp, "le": datetime.now().isoformat(timespec="seconds")}
+    ecrire_json(fichier_envois(), registre)
     fac = SPDP.json("POST", "invoices", params={"external_id": numero, "processing_rule": "B2B"}, corps=corps, type_contenu="application/pdf")
+    registre[numero]["id"] = fac.get("id") if isinstance(fac, dict) else None
+    ecrire_json(fichier_envois(), registre)
     journal(f"Facture {numero} déposée (id {fac.get('id') if isinstance(fac, dict) else '?'})")
     return {"envoye": True, "facture": fac}
 
@@ -932,10 +959,61 @@ def act_ecrire_donnees(_q, corps):
             raise ErreurAPI(400, "Version des données manquante : rechargez la fenêtre")
         if recu != attendu:
             raise ErreurAPI(409, "Les données ont été modifiées par une autre fenêtre du Facturier depuis leur ouverture ici")
+        controler_factures(actuel, d)
         d["_revision"] = attendu + 1
         res = _ecrire_donnees(d)
         res["revision"] = attendu + 1
         return res
+
+
+CHAMPS_FIGES = ("date", "remise", "tauxTVA", "totalHT", "totalTVA", "totalTTC")   # pas « lignes » : migrations de la page
+
+
+def facture_figee(f):
+    """Facture déposée (plateforme) ou sortie de l'état « émise » : son contenu ne change plus."""
+    ef = f.get("efacture") or {}
+    return bool(ef.get("id") or ef.get("deposeeLe")) and ef.get("statut") not in STATUTS_ECHEC
+
+
+def controler_factures(actuel, d):
+    """Règles minimales, même si la page a un défaut : numéros uniques, une facture déposée ne disparaît pas et son
+    contenu ne change pas. Code 422 (et non 409, que la page prend pour un conflit entre fenêtres)."""
+    def doublons(x):
+        vus, dbl = set(), set()
+        for f in (x.get("factures") or []) + (x.get("facturesSupprimes") or []):
+            n = str(f.get("numero") or "") if isinstance(f, dict) else ""
+            (dbl if n in vus else vus).add(n)
+        return dbl - {""}
+    nouveaux = doublons(d) - doublons(actuel or {})          # un doublon ancien ne bloque pas l'enregistrement
+    if nouveaux:
+        raise ErreurAPI(422, f"Numéro de facture en double ({', '.join(sorted(nouveaux))}) : rien n'a été enregistré")
+    nouvelles = {str(f.get("numero")): f for f in d.get("factures") or [] if isinstance(f, dict)}
+    for f in (actuel or {}).get("factures") or []:
+        if not isinstance(f, dict) or not facture_figee(f):
+            continue
+        n = str(f.get("numero"))
+        g = nouvelles.get(n)
+        if g is None:
+            raise ErreurAPI(422, f"La facture {n} a été déposée : elle ne peut pas être supprimée")
+        if any(json.dumps(f.get(k), sort_keys=True) != json.dumps(g.get(k), sort_keys=True) for k in CHAMPS_FIGES):
+            raise ErreurAPI(422, f"La facture {n} a été déposée : son contenu ne peut plus être modifié (faites un avoir)")
+
+
+def conserver_factures(actuel, d):
+    """Import : une sauvegarde plus ancienne ne fait disparaître aucune facture (numéro réutilisé, facture déposée
+    perdue). Les factures et la corbeille actuelles absentes de la sauvegarde sont gardées."""
+    figees = {str(f.get("numero")): f for f in (actuel or {}).get("factures") or [] if isinstance(f, dict) and facture_figee(f)}
+    for cle in ("factures", "facturesSupprimes"):          # une facture déposée garde sa version actuelle
+        d[cle] = [f for f in d.get(cle) or [] if not (isinstance(f, dict) and str(f.get("numero")) in figees and cle == "facturesSupprimes")]
+        d[cle] = [figees.get(str(f.get("numero")), f) if isinstance(f, dict) and cle == "factures" else f for f in d[cle]]
+    connus = {str(f.get("numero")) for f in (d.get("factures") or []) + (d.get("facturesSupprimes") or []) if isinstance(f, dict)}
+    gardees = []
+    for cle in ("factures", "facturesSupprimes"):
+        for f in (actuel or {}).get(cle) or []:
+            if isinstance(f, dict) and str(f.get("numero")) not in connus:
+                d.setdefault(cle, []).append(f)
+                gardees.append(str(f.get("numero")))
+    return gardees
 
 
 def q_revision(q):
@@ -988,11 +1066,14 @@ def act_importer(_q, corps):
         if actuel and siret(actuel) and siret(d) and siret(actuel) != siret(d):
             raise ErreurAPI(400, "Cette sauvegarde est celle d'une autre entreprise (SIREN différent) : ouvrez la bonne entreprise avant d'importer")
         sauvegarder_donnees(f"avant_import_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=getattr(CTX, "entreprise", None) or "principale")
+        gardees = conserver_factures(actuel, d)
+        controler_factures(actuel, d)
         d["_revision"] = int((actuel or {}).get("_revision") or 0) + 1   # les fenêtres ouvertes avant l'import ne peuvent plus écrire
         # En mode « ajout », la corbeille de la sauvegarde ne déplace ni ne modifie aucune fiche existante : elle sert
         # seulement à rattacher ses factures aux bonnes fiches (ajoutées à la corbeille commune si elles sont inconnues)
         res = _ecrire_donnees(d, mode="ajout")
-    journal(f"Sauvegarde importée ({len(d['factures'])} factures)")
+    journal(f"Sauvegarde importée ({len(d['factures'])} factures{', conservées : ' + ' '.join(gardees) if gardees else ''})")
+    res["conservees"] = gardees
     return res
 
 

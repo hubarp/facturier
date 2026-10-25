@@ -434,7 +434,7 @@
     const totauxFacture = (f, data) => {
       const lignes = lignesFacture(f, data);
       const vinHT = round2(lignes.reduce((s, l) => s + l.montantHT, 0));
-      const remisePct = parseFloat(f.remise || 0) || 0;
+      const remisePct = Math.min(100, Math.max(0, parseFloat(f.remise || 0) || 0));
       const remiseHT = round2(vinHT * remisePct / 100);
       const transportHT = round2(parseFloat(f.prixTransport || 0) || 0);
       const totalHT = round2(vinHT - remiseHT + transportHT);
@@ -451,7 +451,7 @@
       const actuel = (data.clients || []).find(c => c.numero === (f.clientId || snap.numero)) || {};
       // SIREN / n° de TVA complétés depuis la fiche actuelle seulement tant que la facture est modifiable (émise, non
       // déposée) : une facture envoyée ou payée se réimprime exactement comme elle était
-      const modifiable = !snap.nom || (f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe));
+      const modifiable = !snap.nom || (f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe && !efactureEnEchec(f)));
       return { ...(modifiable ? actuel : {}), ...snap, siren: snap.siren || (modifiable ? actuel.siren : '') || '', tvaIntra: snap.tvaIntra || (modifiable ? actuel.tvaIntra : '') || '',
         enseigne: snap.nom ? (snap.enseigne || '') : (actuel.enseigne || ''), livraison: snap.livraison && snap.livraison.adresse ? snap.livraison : null };
     };
@@ -689,6 +689,9 @@
       if (!TAUX_TVA_FR.includes(t.taux)) pb.push(`Taux de TVA ${t.taux} % non pris en charge pour une vente en France`);
       if (!t.lignes.length) pb.push('Aucune ligne de produit');
       if (t.lignes.some(l => l.quantite <= 0 || l.prixHT < 0)) pb.push('Ligne avec quantité nulle ou prix négatif');
+      const rem = parseFloat(f.remise || 0) || 0;
+      if (rem < 0 || rem > 100) pb.push(`Remise de ${rem} % impossible (entre 0 et 100 %)`);
+      if (t.totalHT < 0 || t.totalTTC < 0) pb.push('Montant total négatif : une correction se fait par un avoir');
       if (!f.date) pb.push('Date de facture manquante');
       if (f.echeance && f.date && f.echeance < f.date) pb.push('Échéance antérieure à la date de facture');
       return pb;
@@ -978,7 +981,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const dernier = (l) => [...(l || [])].map(f => f.numero).sort().pop() || 'aucune';
       const nomSauv = (d.entreprise && d.entreprise.raisonSociale) || 'sans nom';
       const nomActuel = data.entreprise.raisonSociale || 'l\'entreprise ouverte';
-      if (data.factures.length && !confirm(`Remplacer les données de ${nomActuel} (${data.factures.length} factures, dernière ${dernier(data.factures)}) par celles de la sauvegarde « ${nomSauv} » (${d.factures.length} factures, dernière ${dernier(d.factures)}) ?\n\nUne copie de sécurité est faite avant. Les fiches clients existantes ne sont pas modifiées.`)) return;
+      if (data.factures.length && !confirm(`Remplacer les données de ${nomActuel} (${data.factures.length} factures, dernière ${dernier(data.factures)}) par celles de la sauvegarde « ${nomSauv} » (${d.factures.length} factures, dernière ${dernier(d.factures)}) ?\n\nUne copie de sécurité est faite avant. Les factures actuelles absentes de la sauvegarde sont conservées et les factures déjà déposées gardent leur version actuelle. Les fiches clients existantes ne sont pas modifiées.`)) return;
       if (!RELAIS) { updateData(d); showToast('Données importées'); return; }
       try {
         await ECRITURE.maintenant();
@@ -1003,17 +1006,22 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       if (!r.ok) { const err = new Error((res && res.erreur) || `Erreur ${r.status}`); err.status = r.status; throw err; }
       return res;
     };
-    const STATUTS_ECHEC = ['fr:213', 'fr:210', 'fr:501', 'api:invalid', 'api:rejected'];
-    const STATUTS_FINAUX = [...STATUTS_ECHEC, 'fr:212'];
+    // Rejet (technique) : facture réputée non émise, corrigée et redéposée sous le même numéro.
+    // Refus du client (fr:210) : facture close, jamais renvoyée ; avoir puis nouvelle facture (nouveau numéro).
+    const STATUTS_ECHEC = ['fr:213', 'fr:501', 'api:invalid', 'api:rejected'];
+    const STATUTS_REFUS = ['fr:210'];
+    const STATUTS_FINAUX = [...STATUTS_ECHEC, ...STATUTS_REFUS, 'fr:212'];
     const evenementsCompacts = (evs) => (Array.isArray(evs) ? evs : []).map(e => ({ id: e.id, code: e.status_code, texte: e.status_text || e.status_code, date: e.created_at || '', raison: (e.data && e.data.reason) || ((e.details || [])[0] || {}).reason || '' })).sort((a, b) => (a.id || 0) - (b.id || 0));
     // Statut à afficher : un échec l'emporte, sinon le plus récent
-    const statutPrincipal = (evs) => (evs || []).find(e => STATUTS_ECHEC.includes(e.code)) || (evs || []).slice(-1)[0] || null;
+    const statutPrincipal = (evs) => (evs || []).find(e => STATUTS_REFUS.includes(e.code)) || (evs || []).find(e => STATUTS_ECHEC.includes(e.code)) || (evs || []).slice(-1)[0] || null;
+    const efactureRefusee = (f) => !!(f.efacture && STATUTS_REFUS.includes(f.efacture.statut));
     const efactureEnEchec = (f) => !!(f.efacture && STATUTS_ECHEC.includes(f.efacture.statut));
     const efactureDeposee = (f) => !!(f.efacture && f.efacture.id && !efactureEnEchec(f));
     // Adresse de réception du client dans l'annuaire officiel (sans le préfixe 0225:)
     const adresseAnnuaire = (siren, entrees) => {
-      const actives = (entrees || []).filter(e => e.is_active !== false && e.identifier);
-      const choix = actives.find(e => e.identifier === `0225:${siren}`) || actives[0];
+      // Seulement les lignes de CE SIREN ; plusieurs lignes fines sans ligne SIREN : pas de choix au hasard (repli SIREN)
+      const actives = (entrees || []).filter(e => e.is_active !== false && e.identifier && (e.identifier === `0225:${siren}` || String(e.identifier).startsWith(`0225:${siren}_`)));
+      const choix = actives.find(e => e.identifier === `0225:${siren}`) || (actives.length === 1 ? actives[0] : null);
       return choix ? choix.identifier.replace(/^0225:/, '') : '';
     };
     const ConnexionCtx = React.createContext({ etat: 'absent' });
@@ -1071,7 +1079,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const isOverdue = (f) => f.echeance && f.statut !== 'payee' && new Date(f.echeance) < new Date();
     const getFactureStatut = (f) => f.statut === 'payee' ? 'payee' : isOverdue(f) ? 'enretard' : f.statut;
     // Une facture électronique déposée (directement ou à la main) ne se modifie ni ne se supprime plus
-    const canEditFacture = (f) => f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe);
+    const canEditFacture = (f) => f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe && !efactureEnEchec(f));
     const canDeleteFacture = canEditFacture;
 
     function App() {
@@ -1321,19 +1329,24 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         let rep;
         try { rep = await appelRelais(`/api/suivi?ids=${aSuivre.map(f => f.efacture.id).join(',')}`); }
         catch (e) { if (!silencieux) showToast(e.message); return; }
-        const rejets = [];
+        const rejets = [], refus = [];
         setData(prev => ({ ...prev, factures: prev.factures.map(f => {
           const evs = f.efacture && f.efacture.id ? rep.suivi[String(f.efacture.id)] : null;
           if (!Array.isArray(evs) || !evs.length) return f;
           const liste = evenementsCompacts(evs), principal = statutPrincipal(liste);
           const efacture = { ...f.efacture, evenements: liste, statut: principal.code, statutTexte: principal.texte, raison: principal.raison || '' };
+          if (STATUTS_REFUS.includes(principal.code) && !STATUTS_REFUS.includes(f.efacture.statut)) {
+            refus.push(`${f.numero} : ${principal.texte}${principal.raison ? ' — ' + principal.raison : ''}`);
+            return { ...f, efacture };
+          }
           if (STATUTS_ECHEC.includes(principal.code) && !STATUTS_ECHEC.includes(f.efacture.statut)) {
             rejets.push(`${f.numero} : ${principal.texte}${principal.raison ? ' — ' + principal.raison : ''}`);
             return { ...f, efacture, statut: f.statut === 'envoyee' ? 'emise' : f.statut };
           }
           return { ...f, efacture };
         }) }));
-        if (rejets.length) showToast(`Facture refusée par la plateforme : ${rejets.join(' ; ')}. Corrigez-la puis renvoyez-la.`);
+        if (refus.length) showToast(`Facture refusée par le client : ${refus.join(' ; ')}. Elle ne peut pas être renvoyée : faites un avoir puis une nouvelle facture.`);
+        else if (rejets.length) showToast(`Facture rejetée par la plateforme : ${rejets.join(' ; ')}. Corrigez-la puis renvoyez-la.`);
         else if (!silencieux) showToast('Statuts à jour');
       };
       useEffect(() => {
@@ -1738,7 +1751,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           const fx = adr !== siren ? { ...f, client: { ...(f.client || c), adresseElectronique: adr } } : f;
           const octets = await genererFacturX(fx, dataEnvoi);
           copie.current = octets;
-          const r = await appelRelais(`/api/envoyer?numero=${encodeURIComponent(f.numero)}`, { methode: 'POST', type: 'application/pdf', corps: new Blob([octets], { type: 'application/pdf' }) });
+          const empreinte = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(facturXML(fx, dataEnvoi))))].map(b => b.toString(16).padStart(2, '0')).join('');
+          const r = await appelRelais(`/api/envoyer?numero=${encodeURIComponent(f.numero)}&empreinte=${empreinte}`, { methode: 'POST', type: 'application/pdf', corps: new Blob([octets], { type: 'application/pdf' }) });
           if (!r.envoye) { setErreurs(r.erreurs || []); setEtape('refusee'); return; }
           const liste = evenementsCompacts(r.facture.events), principal = statutPrincipal(liste);
           majFacture({
@@ -1756,7 +1770,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         setEtape(null);
       };
       const actualiser = async () => { setActualisation(true); await cx.actualiserSuivi(false); setActualisation(false); };
-      const libelle = efactureEnEchec(f) ? 'Facture électronique : refusée' : f.efacture?.id ? `Facture électronique : ${f.efacture.statutTexte || 'envoyée'}` : `Facture électronique${f.efacture?.deposeeLe ? ' ✓' : ''}`;
+      const libelle = efactureRefusee(f) ? 'Facture électronique : refusée par le client' : efactureEnEchec(f) ? 'Facture électronique : rejetée' : f.efacture?.id ? `Facture électronique : ${f.efacture.statutTexte || 'envoyée'}` : `Facture électronique${f.efacture?.deposeeLe ? ' ✓' : ''}`;
       const fermer = () => !['generation', 'envoi', 'verification'].includes(etape) && setEtape(null);
       const evs = (f.efacture && f.efacture.evenements) || [];
       return (
@@ -2177,6 +2191,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (!simple && !form.plaque.trim()) errs.plaque = 'Requis';
         if (!simple && (form.prixTransport === '' || form.prixTransport === null)) errs.prixTransport = 'Requis';
         if (form.tauxTVA === '' || form.tauxTVA === null) errs.tauxTVA = 'Requis';
+        const rem = parseFloat(form.remise || 0) || 0;
+        if (rem < 0 || rem > 100) errs.remise = 'Entre 0 et 100 %';
         if (!form.lignes.some(l => l.produitRef)) errs.lignes = 'Au moins un produit';
         else if (form.lignes.some(l => l.produitRef && !estExceptionnel(l) && (l.prixHT === '' || l.prixHT === undefined || isNaN(parseFloat(l.prixHT)) || parseFloat(l.prixHT) < 0)))
           errs.lignes = 'Prix unitaire manquant sur une ligne';
@@ -3419,12 +3435,12 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
         const emptyCell = () => ({ hl: 0, factures: [] });
         const matrix = {
-          VSIG_BLANC: { France: emptyCell(), Export: emptyCell() },
-          VSIG_ROUGE: { France: emptyCell(), Export: emptyCell() },
-          VSIG_ROSE: { France: emptyCell(), Export: emptyCell() },
-          BULLE: { France: emptyCell(), Export: emptyCell() },
-          SANS_ALCOOL: { France: emptyCell(), Export: emptyCell() },
-          AUTRES: { France: emptyCell(), Export: emptyCell() }
+          VSIG_BLANC: { France: emptyCell(), UE: emptyCell(), Export: emptyCell() },
+          VSIG_ROUGE: { France: emptyCell(), UE: emptyCell(), Export: emptyCell() },
+          VSIG_ROSE: { France: emptyCell(), UE: emptyCell(), Export: emptyCell() },
+          BULLE: { France: emptyCell(), UE: emptyCell(), Export: emptyCell() },
+          SANS_ALCOOL: { France: emptyCell(), UE: emptyCell(), Export: emptyCell() },
+          AUTRES: { France: emptyCell(), UE: emptyCell(), Export: emptyCell() }
         };
 
         (data.factures || []).forEach(f => {
@@ -3433,7 +3449,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           const fDate = new Date(f.date);
           if (fDate < startDate || fDate > endDate) return;
 
-          const destination = parseFloat(f.tauxTVA) === 20 ? 'France' : 'Export';
+          // TVA française (20 / 10 / 5,5 %) = vente en France ; TVA 0 % = sortie vers l'UE ou export selon le pays du client
+          const pays = String((f.client && f.client.pays) || '').trim();
+          const destination = (parseFloat(f.tauxTVA) || 0) > 0 ? 'France' : !pays ? 'Export' : estFrance(f.client) ? 'France' : paysUE(pays) ? 'UE' : 'Export';
 
           (f.lignes || []).forEach(l => {
             if (!l.produitRef) return;
@@ -3465,9 +3483,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
       const formatHl = (hl) => hl.toFixed(3);
 
-      const totalFrance = ['VSIG_BLANC','VSIG_ROUGE','VSIG_ROSE','BULLE','SANS_ALCOOL','AUTRES'].reduce((s, k) => s + drmData[k].France.hl, 0);
-      const totalExport = ['VSIG_BLANC','VSIG_ROUGE','VSIG_ROSE','BULLE','SANS_ALCOOL','AUTRES'].reduce((s, k) => s + drmData[k].Export.hl, 0);
-      const grandTotal = totalFrance + totalExport;
+      const COLS_DRM = [['France', 'France'], ['UE', 'Union européenne'], ['Export', 'Export hors UE']];
+      const totalCol = (col) => ['VSIG_BLANC','VSIG_ROUGE','VSIG_ROSE','BULLE','SANS_ALCOOL','AUTRES'].reduce((s, k) => s + drmData[k][col].hl, 0);
+      const grandTotal = COLS_DRM.reduce((s, [col]) => s + totalCol(col), 0);
 
       const yearsAvailable = useMemo(() => {
         const years = new Set([today.getFullYear(), lastMonth.getFullYear()]);
@@ -3534,15 +3552,14 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <thead>
                 <tr>
                   <th>Catégorie</th>
-                  <th style={{textAlign: 'right'}}>France (hL)</th>
-                  <th style={{textAlign: 'right'}}>Export (hL)</th>
+                  {COLS_DRM.map(([col, lib]) => <th key={col} style={{textAlign: 'right'}}>{lib} (hL)</th>)}
                   <th style={{textAlign: 'right'}}>Total (hL)</th>
                 </tr>
               </thead>
               <tbody>
                 {['VSIG_BLANC', 'VSIG_ROUGE', 'VSIG_ROSE', 'BULLE', 'SANS_ALCOOL', 'AUTRES'].map(key => {
                   const row = drmData[key];
-                  const rowTotal = row.France.hl + row.Export.hl;
+                  const rowTotal = COLS_DRM.reduce((s, [col]) => s + row[col].hl, 0);
                   const isAutres = key === 'AUTRES';
                   const hasAlert = isAutres && rowTotal > 0;
                   const label = CATEGORIE_LABELS[key];
@@ -3553,34 +3570,22 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                           <strong>{label}</strong>
                           {isAutres && <span style={{marginLeft: 8, fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic'}}>(contrôle — doit être à 0)</span>}
                         </td>
-                        <td style={{textAlign: 'right'}}>
-                          {row.France.factures.length > 0 ? (
-                            <button className="drm-cell-btn" onClick={() => setExpandedCell(expandedCell === `${key}_France` ? null : `${key}_France`)}>
-                              {formatHl(row.France.hl)}
-                              <span style={{marginLeft: 4, fontSize: 10, opacity: 0.6}}>{expandedCell === `${key}_France` ? '▴' : '▾'}</span>
+                        {COLS_DRM.map(([col]) => (
+                        <td key={col} style={{textAlign: 'right'}}>
+                          {row[col].factures.length > 0 ? (
+                            <button className="drm-cell-btn" onClick={() => setExpandedCell(expandedCell === `${key}_${col}` ? null : `${key}_${col}`)}>
+                              {formatHl(row[col].hl)}
+                              <span style={{marginLeft: 4, fontSize: 10, opacity: 0.6}}>{expandedCell === `${key}_${col}` ? '▴' : '▾'}</span>
                             </button>
                           ) : (
-                            <span>{formatHl(row.France.hl)}</span>
+                            <span>{formatHl(row[col].hl)}</span>
                           )}
-                        </td>
-                        <td style={{textAlign: 'right'}}>
-                          {row.Export.factures.length > 0 ? (
-                            <button className="drm-cell-btn" onClick={() => setExpandedCell(expandedCell === `${key}_Export` ? null : `${key}_Export`)}>
-                              {formatHl(row.Export.hl)}
-                              <span style={{marginLeft: 4, fontSize: 10, opacity: 0.6}}>{expandedCell === `${key}_Export` ? '▴' : '▾'}</span>
-                            </button>
-                          ) : (
-                            <span>{formatHl(row.Export.hl)}</span>
-                          )}
-                        </td>
+                        </td>))}
                         <td style={{textAlign: 'right', fontWeight: 600}}>{formatHl(rowTotal)}</td>
                       </tr>
-                      {expandedCell === `${key}_France` && row.France.factures.length > 0 && (
-                        <DrmDetailRow factures={row.France.factures} />
-                      )}
-                      {expandedCell === `${key}_Export` && row.Export.factures.length > 0 && (
-                        <DrmDetailRow factures={row.Export.factures} />
-                      )}
+                      {COLS_DRM.map(([col]) => expandedCell === `${key}_${col}` && row[col].factures.length > 0 && (
+                        <DrmDetailRow key={col} factures={row[col].factures} />
+                      ))}
                     </React.Fragment>
                   );
                 })}
@@ -3588,15 +3593,14 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <tfoot>
                 <tr className="drm-total-row">
                   <td><strong>Total</strong></td>
-                  <td style={{textAlign: 'right'}}><strong>{formatHl(totalFrance)}</strong></td>
-                  <td style={{textAlign: 'right'}}><strong>{formatHl(totalExport)}</strong></td>
+                  {COLS_DRM.map(([col]) => <td key={col} style={{textAlign: 'right'}}><strong>{formatHl(totalCol(col))}</strong></td>)}
                   <td style={{textAlign: 'right'}}><strong>{formatHl(grandTotal)}</strong></td>
                 </tr>
               </tfoot>
             </table>
 
             <div style={{marginTop: 16, fontSize: 12, color: 'var(--text-muted)'}}>
-              Volumes calculés à partir des factures {includeEmise ? 'émises, envoyées et payées' : 'envoyées et payées'} du mois. France = TVA 20 %, Export = TVA 0 %.
+              Volumes calculés à partir des factures {includeEmise ? 'émises, envoyées et payées' : 'envoyées et payées'} du mois. France = TVA française (ou client en France), UE et Export hors UE = TVA 0 % selon le pays du client.
             </div>
           </div>
 
