@@ -853,46 +853,66 @@ def ecrire_programme(fichiers):
 
 def finir_installation():
     """Au lancement : termine des remplacements interrompus (coupure de courant), efface les .tmp abandonnés.
-    Renvoie True si facturier.pyw vient d'être remplacé (il faut alors relancer le nouveau programme)."""
-    pyw_remplace = False
-    try:
-        if MARQUEUR_MAJ.exists():
-            lignes = MARQUEUR_MAJ.read_text(encoding="utf-8", errors="replace").split("\n")
-            if lignes[-1] == FIN_MARQUEUR:
-                for nom in lignes[:-1]:
-                    tmp = ICI / (nom + ".tmp")
-                    if nom in FICHIERS_PROGRAMME and tmp.exists():
-                        rendre_modifiable(ICI / nom)
-                        os.replace(tmp, ICI / nom)
-                        pyw_remplace |= nom == "facturier.pyw"
-                journal("Mise à jour interrompue terminée au lancement")
-            MARQUEUR_MAJ.unlink()
+    Renvoie True si facturier.pyw vient d'être remplacé (il faut alors relancer le nouveau programme).
+    Chaque étape a sa propre protection : un échec (fichier tenu par un antivirus…) n'empêche pas les suivantes, et
+    l'étape ratée est refaite au lancement suivant."""
+    etat = {"pyw": False}
+
+    def terminer_remplacements():
+        if not MARQUEUR_MAJ.exists():
+            return
+        lignes = MARQUEUR_MAJ.read_text(encoding="utf-8", errors="replace").split("\n")
+        if lignes[-1] == FIN_MARQUEUR:
+            for nom in lignes[:-1]:
+                tmp = ICI / (nom + ".tmp")
+                if nom in FICHIERS_PROGRAMME and tmp.exists():
+                    rendre_modifiable(ICI / nom)
+                    os.replace(tmp, ICI / nom)
+                    etat["pyw"] |= nom == "facturier.pyw"
+            journal("Mise à jour interrompue terminée au lancement")
+        MARQUEUR_MAJ.unlink()
+
+    def ranger_precedente():
         if PREPARE.exists():
             if version_de(PREPARE) and version_de(PREPARE) != version_de(ICI):
                 garder_comme_precedente()                  # installation terminée : l'ancienne version devient la « précédente »
             else:
                 _effacer_dossier(PREPARE)                  # installation jamais commencée : le vrai retour arrière reste
-        if MIS_DE_COTE.exists():                   # échange de « programme_precedent » interrompu
+
+    def finir_echange():
+        if MIS_DE_COTE.exists():                           # échange de « programme_precedent » interrompu
             if PRECEDENT.exists():
                 _effacer_dossier(MIS_DE_COTE)
             else:
                 os.replace(MIS_DE_COTE, PRECEDENT)
+
+    def effacer_tmp():
+        if MARQUEUR_MAJ.exists():                          # remplacements pas encore terminés : leurs .tmp servent encore
+            return
         for nom in FICHIERS_PROGRAMME:
             if (ICI / (nom + ".tmp")).exists():
                 rendre_modifiable(ICI / (nom + ".tmp"))
                 (ICI / (nom + ".tmp")).unlink()
+
+    def retirer_lecture_seule():
         for nom in FICHIERS_PROGRAMME:
-            rendre_modifiable(ICI / nom)      # postes installés depuis une archive qui posait « lecture seule »
-        if (ICI / RATTRAPAGE).exists():       # page livrée à côté par un ancien programme (bloqué ou non)
+            rendre_modifiable(ICI / nom)                   # postes installés depuis une archive qui posait « lecture seule »
+
+    def rattrapage_page():
+        if (ICI / RATTRAPAGE).exists():                    # page livrée à côté par un ancien programme (bloqué ou non)
             rendre_modifiable(ICI / RATTRAPAGE)
             if (ICI / "facturier.html").exists() and (ICI / RATTRAPAGE).read_bytes() == (ICI / "facturier.html").read_bytes():
-                (ICI / RATTRAPAGE).unlink()   # poste non bloqué : la page est déjà la bonne, la copie ne sert à rien
+                (ICI / RATTRAPAGE).unlink()               # poste non bloqué : la page est déjà la bonne, la copie ne sert à rien
             else:
                 os.replace(ICI / RATTRAPAGE, ICI / "facturier.html")
                 journal("Page du Facturier mise en place (rattrapage « lecture seule »)")
-    except OSError as e:
-        journal(f"Remise en ordre des fichiers du programme impossible : {e!r}")
-    return pyw_remplace
+
+    for etape in (terminer_remplacements, ranger_precedente, finir_echange, effacer_tmp, retirer_lecture_seule, rattrapage_page):
+        try:
+            etape()
+        except OSError as e:
+            journal(f"Remise en ordre des fichiers du programme ({etape.__name__}) impossible : {e!r}")
+    return etat["pyw"]
 
 
 def installer_programme(fichiers):
