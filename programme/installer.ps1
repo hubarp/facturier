@@ -57,7 +57,7 @@ $cibles = @(
 foreach ($c in $cibles) {
     $l = $shell.CreateShortcut($c)
     $l.TargetPath = $py.exe
-    $l.Arguments = ("$($py.args) `"$script`"").Trim()
+    $l.Arguments = ("$($py.args) -I `"$script`"").Trim()      # -I : aucun module pris dans le dossier du programme
     $l.WorkingDirectory = $prog
     $l.IconLocation = (Join-Path $prog 'facturier.ico') + ',0'
     $l.Description = 'Facturier'
@@ -65,6 +65,6 @@ foreach ($c in $cibles) {
 }
 Write-Host 'Raccourci « Facturier » créé sur le bureau, dans le menu Démarrer et dans ce dossier.' -ForegroundColor Green
 Write-Host 'Ouverture du Facturier...'
-Start-Process -FilePath $py.exe -ArgumentList (("$($py.args) `"$script`"").Trim()) -WorkingDirectory $prog
+Start-Process -FilePath $py.exe -ArgumentList (("$($py.args) -I `"$script`"").Trim()) -WorkingDirectory $prog
 Write-Host ''
 Write-Host 'Terminé. Désormais, ouvrez le Facturier par son icône.' -ForegroundColor Green

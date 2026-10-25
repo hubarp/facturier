@@ -7,6 +7,11 @@ avec les identifiants, qui restent sur ce PC et ne sont jamais envoyés au navig
 Python 3.9 ou plus récent, sans module supplémentaire. Lancé par le raccourci « Facturier »
 (créé par « Installer le Facturier.bat »). Reste actif, invisible, jusqu'à la fermeture de la session Windows.
 """
+import sys
+
+if __name__ == "__main__" and not sys.flags.isolated and sys.path and sys.path[0]:
+    del sys.path[0]   # lancé sans « -I » (raccourci d'une ancienne installation) : aucun module pris dans « programme »
+
 import base64
 import hashlib
 import hmac
@@ -19,7 +24,6 @@ import secrets
 import shutil
 import socket
 import stat
-import sys
 import threading
 import time
 import urllib.error
@@ -33,7 +37,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.20-6"
+VERSION = "2026.10.25-1"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 # Réglages de test (autre serveur, autre clé de signature…) : pris en compte seulement si un fichier « MODE_TEST »
 # est posé à la main dans le dossier « programme ». Une mise à jour ne peut jamais livrer ce fichier (liste blanche).

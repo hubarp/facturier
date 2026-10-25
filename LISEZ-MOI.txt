@@ -4,19 +4,27 @@ FACTURIER — mode d'emploi
 INSTALLATION (une seule fois)
 1. Avant tout, dans l'ancien facturier (le fichier ouvert d'habitude) :
    Paramètres > Sauvegarde & Export > JSON. Gardez le fichier facturier_backup_....json téléchargé.
-2. Double-cliquez sur « Installer le Facturier ».
-   Il installe Python si besoin (quelques minutes), puis crée l'icône « Facturier »
+2. Placez le dossier « Facturier » dans votre dossier personnel (par exemple C:\Users\<vous>\Facturier).
+   PAS dans OneDrive, ni sur un Bureau ou des Documents synchronisés par OneDrive : vos factures et la clé
+   Super PDP partiraient dans le cloud, et le Facturier ne doit jamais tourner sur deux PC à la fois.
+3. Double-cliquez sur « Installer le Facturier ».
+   Windows peut afficher « Windows a protégé votre ordinateur » (SmartScreen) : c'est attendu, le fichier
+   n'a pas de signature d'éditeur. Si l'archive vient bien d'Antoine, cliquez « Informations complémentaires »
+   puis « Exécuter quand même ».
+   L'installation met Python si besoin (quelques minutes), puis crée l'icône « Facturier »
    sur le bureau et dans le menu Démarrer, et ouvre le Facturier.
-3. Au premier lancement, cliquez sur « Importer ma sauvegarde » et choisissez le fichier de l'étape 1.
-4. Pour envoyer les factures électroniques : Paramètres > Connexion Super PDP,
+4. Au premier lancement, cliquez sur « Importer ma sauvegarde » et choisissez le fichier de l'étape 1.
+5. Pour envoyer les factures électroniques : Paramètres > Connexion Super PDP,
    collez l'identifiant et le secret de l'application créée dans votre compte Super PDP.
-5. N'utilisez plus l'ancien fichier facturier : rangez-le ou supprimez-le pour ne pas confondre.
+6. N'utilisez plus l'ancien fichier facturier : rangez-le ou supprimez-le pour ne pas confondre.
 
 AU QUOTIDIEN
 - Ouvrez le Facturier par son icône. Il s'ouvre dans sa propre fenêtre, comme un logiciel.
 - Fermer la fenêtre suffit : tout est enregistré automatiquement, au fil de l'eau.
 - Envoyer une facture à un client pro : ouvrir la facture > « Facture électronique »
   > « Envoyer via Super PDP ». Le statut se met à jour tout seul.
+- Facture électronique « rejetée » par la plateforme : corrigez-la puis renvoyez-la (même numéro).
+  Facture « refusée par le client » : elle ne se renvoie pas ; faites un avoir puis une nouvelle facture.
 - Factures de vos fournisseurs : Factures > onglet « Reçues ».
 
 PRODUITS ET TARIFS
@@ -41,7 +49,10 @@ PLUSIEURS ENTREPRISES
 - Une seule fenêtre du Facturier travaille à la fois : en ouvrir une deuxième désactive la première.
 - Importer une sauvegarde (Paramètres > Sauvegarde & Export > Importer) remplace les factures et produits de
   l'entreprise ouverte, après confirmation et copie de sécurité ; elle est refusée si la sauvegarde est celle
-  d'une autre entreprise. Les fiches clients existantes ne sont pas modifiées (les nouvelles sont ajoutées).
+  d'une autre entreprise. Les factures actuelles absentes de la sauvegarde sont gardées, et une facture déjà
+  déposée garde sa version actuelle. Les fiches clients existantes ne sont pas modifiées (les nouvelles sont ajoutées).
+- Si la sauvegarde change l'IBAN, le BIC ou le SIRET, un avertissement s'affiche. N'importez jamais un fichier
+  reçu par courriel ou donné par quelqu'un d'autre : seulement vos propres sauvegardes.
 - Si la fenêtre se ferme avant le dernier enregistrement, les modifications sont reprises à la réouverture.
 - Paramètres > Sauvegarde & Export : « Sauvegarde complète » regroupe toutes les entreprises dans un seul
   fichier zip ; Excel et JSON ne concernent que l'entreprise ouverte.
@@ -54,16 +65,21 @@ CLIENTS DE L'UNION EUROPÉENNE
 
 OÙ SONT LES DONNÉES
 - Dans le dossier « donnees » à côté de ce fichier :
-    facturier.json      vos clients, produits et factures
+    facturier.json      vos produits et factures
+    clients.json        vos clients (communs à toutes les entreprises)
     sauvegardes\        une copie par jour (les 60 derniers jours)
-    identifiants.txt    la clé Super PDP : NE PAS PARTAGER
+    identifiants.txt    la clé Super PDP, chiffrée pour votre compte Windows : NE PAS PARTAGER
     journal.txt         trace des échanges avec Super PDP, sans aucun secret
-- Pour une sauvegarde hors du PC (clé USB, autre ordinateur) : copiez le dossier « donnees »,
-  ou utilisez toujours Paramètres > Sauvegarde & Export.
+- Pour une sauvegarde hors du PC (clé USB, autre ordinateur) : Paramètres > Sauvegarde & Export >
+  « Sauvegarde complète » (toutes les entreprises dans un seul fichier, sans la clé Super PDP).
+  Ne recopiez pas le dossier « donnees » lui-même : il contient la clé Super PDP.
 
 SÉCURITÉ
 - Le Facturier n'est joignable que depuis ce PC, jamais depuis le réseau ni internet.
-- La clé Super PDP reste dans identifiants.txt et n'est jamais confiée au navigateur.
+- La clé Super PDP reste dans identifiants.txt, chiffrée pour votre compte Windows, et n'est jamais confiée
+  au navigateur. Recopiée sur un autre PC, elle ne marche pas : il suffit de la ressaisir (Paramètres).
+- Ouvrez toujours le Facturier par son icône : taper son adresse dans un navigateur affiche seulement
+  « Ouvrez le Facturier par son icône » (c'est voulu).
 - Ne placez pas ce dossier dans un dossier partagé avec d'autres personnes.
 
 MISES À JOUR
@@ -72,4 +88,8 @@ MISES À JOUR
   tout seul quelques secondes plus tard. Vos données ne sont pas touchées (et sont sauvegardées avant).
 - Paramètres > Mises à jour : voir la version installée, rechercher une mise à jour,
   ou revenir à la version précédente en cas de souci.
+- Si « La mise à jour n'a pas abouti » s'affiche (une fois, sur certains PC) : fermez la fenêtre, rouvrez le
+  Facturier par son icône, puis vérifiez la version dans Paramètres > Mises à jour.
+- Si une nouvelle version ne démarre pas, le Facturier revient tout seul à la version précédente et l'indique :
+  prévenez Antoine.
 - Chaque version est signée par Antoine : le Facturier refuse d'installer une version non signée.
