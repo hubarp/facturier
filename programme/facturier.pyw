@@ -998,12 +998,20 @@ def installer_ou_expliquer(fichiers):
 RELEVE = threading.Event()   # la version suivante a demandé l'arrêt de celle-ci (elle a démarré)
 
 
-def lancer_programme(fenetre=False):
+SESSION_DEPUIS = "2026.10.25-1"    # première version qui reprend le jeton de la fenêtre ouverte (FACTURIER_SESSION)
+
+
+def lancer_programme(fenetre=False, session=True):
     """Seule façon de (re)lancer le programme depuis lui-même (mise à jour, retour, retour automatique) : processus
     détaché, « python -I » (aucun module pris dans le dossier « programme ») et le jeton de la fenêtre déjà ouverte
-    (FACTURIER_SESSION), qui continue donc de fonctionner après le redémarrage."""
+    (FACTURIER_SESSION), qui continue donc de fonctionner après le redémarrage. session=False pour une version plus
+    ancienne, qui ne connaît pas ce jeton : elle le garderait dans son environnement et le transmettrait à la version
+    suivante, qui croirait alors à tort qu'une fenêtre est déjà ouverte (aucune fenêtre ne s'ouvrirait)."""
     options = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
-    env = dict(os.environ, FACTURIER_SESSION=JETON)
+    env = dict(os.environ)
+    env.pop("FACTURIER_SESSION", None)
+    if session:
+        env["FACTURIER_SESSION"] = JETON
     subprocess.Popen([sys.executable, "-I", str(ICI / "facturier.pyw")] + ([] if fenetre else ["--sans-navigateur"]),
                      cwd=str(ICI), close_fds=True, env=env, **options)
 
@@ -1022,7 +1030,7 @@ def remettre_precedente(fichiers):
     garder_comme_precedente()
 
 
-def redemarrer(ancien, precedente_avant, version_cible=None, delai=60):
+def redemarrer(ancien, precedente_avant, version_cible=None, session=True, delai=60):
     """Lance la nouvelle version, qui arrête celle-ci (même mécanisme qu'à l'ouverture). Si elle ne l'a pas fait
     au bout de `delai` secondes (plantage dès son lancement), les fichiers de CETTE version, gardés en mémoire avant
     l'installation (`ancien`), sont remis en place — jamais le contenu de « programme_precedent », qui n'a peut-être pas
@@ -1042,7 +1050,7 @@ def redemarrer(ancien, precedente_avant, version_cible=None, delai=60):
                 MAJ_FAITE.clear()        # cette version continue de servir : les boutons de mise à jour redeviennent utilisables
             except OSError as e:
                 journal(f"La nouvelle version n'a pas démarré ; retour automatique impossible : {e!r}")
-    threading.Timer(0.5, lancer_programme).start()
+    threading.Timer(0.5, lancer_programme, kwargs={"session": session}).start()
     threading.Thread(target=surveiller, daemon=True).start()
 
 
@@ -1103,7 +1111,7 @@ def act_maj_retour(_q, _corps):
     MAJ_FAITE.set()
     (DONNEES / "maj_ignoree.txt").write_text(VERSION, encoding="utf-8")
     journal(f"Retour à la version {precedente} (depuis {VERSION})")
-    redemarrer(ancien, retour)
+    redemarrer(ancien, retour, session=num_version(precedente) >= num_version(SESSION_DEPUIS))
     return {"ok": True, "version": precedente}
 
 
@@ -2136,7 +2144,7 @@ def main():
         if precedente:
             message(f"La nouvelle version {VERSION} du Facturier n'a pas pu démarrer ({erreur}).\n\n"
                     f"Retour automatique à la version {precedente} : le Facturier va se rouvrir. Prévenez Antoine.")
-            lancer_programme(fenetre)
+            lancer_programme(fenetre, session=num_version(precedente) >= num_version(SESSION_DEPUIS))
             return
         message(erreur + ("\n\nNe rouvrez pas le Facturier avant d'avoir prévenu Antoine : une copie de sécurité « avant_format » est dans le dossier des sauvegardes."
                           if "ATTENTION" in erreur else
