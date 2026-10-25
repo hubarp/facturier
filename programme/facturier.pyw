@@ -750,8 +750,9 @@ def lire_manifeste():
     expire = str(contenu.get("expire", ""))
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expire) or expire < datetime.now().strftime("%Y-%m-%d"):
         journal(f"Manifeste expiré ou date illisible ({expire})")
-        raise ErreurAPI(400, f"Les informations de mise à jour ont expiré ({expire or 'sans date'}) : prévenez Antoine, "
-                             "il doit les signer à nouveau. Le Facturier continue de fonctionner normalement.")
+        raise ErreurAPI(400, f"Les informations de mise à jour ont expiré ({expire or 'sans date'}) : vérifiez la date et l'heure "
+                             "du PC ; si elles sont justes, prévenez Antoine, il doit les signer à nouveau. Le Facturier continue "
+                             "de fonctionner normalement.")
     # On retient aussi la plus haute version déjà annoncée : un serveur qui se met à présenter un manifeste plus ancien
     # (retour en arrière du canal de mise à jour) est signalé au lieu de passer pour « à jour ».
     vue = DONNEES / "maj_vue.txt"
