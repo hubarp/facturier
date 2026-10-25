@@ -1,19 +1,26 @@
 """Signature des versions du Facturier — à garder sur le PC d'Antoine, jamais publié.
 
-  python signer_version.py ou-est-la-cle
+À lancer depuis une invite de commandes ouverte dans le dossier du dépôt, par exemple :
+  python outils\\signer_version.py archives 2026.10.25-1
+
+  python outils\\signer_version.py ou-est-la-cle
       indique où la clé privée est cherchée, et si elle correspond à la clé publique de facturier.pyw
-  python signer_version.py ranger-cle
+  python outils\\signer_version.py ranger-cle
       déplace une ancienne clé (outils\\cle_privee_facturier.txt, dans le clone du dépôt) vers son emplacement
       hors du dépôt
-  python signer_version.py nouvelle-cle
+  python outils\\signer_version.py nouvelle-cle
       crée la clé privée UNIQUEMENT s'il n'en existe aucune et si facturier.pyw n'a pas encore de clé publique
-  python signer_version.py archives <version>
+  python outils\\signer_version.py archives <version>
       fabrique versions\\facturier-<version>.zip (mise à jour) et versions\\Facturier-installation-<version>.zip
       à partir du dossier programme, sans attribut « lecture seule », et affiche l'empreinte SHA-256 de l'archive
-      d'installation (à communiquer par SMS / téléphone à la personne qui installe)
-  python signer_version.py signer <archive.zip> <version> <notes.txt> <url>
-      contrôle l'archive puis écrit version.json (manifeste signé, valable un an) à côté de l'archive.
-      Sans nouvelle version pendant 11 mois, relancer la même commande sur la dernière archive pour prolonger.
+      d'installation (à communiquer par SMS / téléphone à la personne qui installe). Refuse d'écraser une archive
+      déjà fabriquée avec un autre contenu (une archive publiée ne change jamais : nouveau numéro de version).
+  python outils\\signer_version.py signer <version> <notes.txt>
+      contrôle versions\\facturier-<version>.zip puis écrit le manifeste signé (valable un an) dans version.json,
+      à la racine du dépôt, là où les postes le lisent. L'adresse de téléchargement est déduite du nom de l'archive.
+      notes.txt : les nouveautés, en UTF-8 (le Bloc-notes enregistre en UTF-8, avec ou sans BOM : les deux vont).
+      Refuse un numéro plus petit que celui déjà publié, et un numéro déjà publié avec une autre archive.
+      Sans nouvelle version pendant 11 mois, relancer la même commande (même version) pour prolonger d'un an.
 
 La clé privée vit HORS du dépôt : par défaut %APPDATA%\\Facturier-signature\\cle_privee_facturier.txt
 (ou le fichier désigné par la variable FACTURIER_CLE_PRIVEE). Sans elle, personne ne peut produire une version que
@@ -29,7 +36,8 @@ import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
-import ed25519
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # ed25519.py, à côté de ce fichier
+import ed25519  # noqa: E402
 
 ICI = Path(__file__).resolve().parent
 DEPOT = ICI.parent
@@ -39,6 +47,9 @@ FICHIERS_PROGRAMME = {"facturier.pyw", "facturier.html", "facturier.ico", "factu
 RATTRAPAGE = "facturier.html.nouveau"   # copie exacte de facturier.html, pour les postes bloqués par « lecture seule »
 FORMAT_VERSION = re.compile(r"\d{4}\.\d{2}\.\d{2}-\d{1,3}")
 VALIDITE_JOURS = 365   # un manifeste signé reste valable un an : re-signer (même archive) au moins une fois par an
+# Adresse des archives publiées (doit correspondre à URL_AUTORISEE de facturier.pyw). La variable ne sert qu'aux essais.
+URL_PUBLICATION = os.environ.get("FACTURIER_URL_PUBLICATION", "https://raw.githubusercontent.com/hubarp/facturier/main/versions/")
+MANIFESTE = DEPOT / "version.json"
 
 
 def emplacement_cle():
@@ -175,22 +186,70 @@ def controler_archive(donnees, version):
             arreter("le facturier.pyw de l'archive n'a pas la même clé publique que celui du dépôt")
 
 
-def signer(archive, version, notes, url):
-    donnees = Path(archive).read_bytes()
+def num_version(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v)))
+
+
+def lire_notes(notes):
+    try:
+        texte = Path(notes).read_text(encoding="utf-8-sig").strip()       # UTF-8, avec ou sans BOM
+    except OSError as e:
+        arreter(f"fichier des nouveautés illisible ({notes}) : {e}")
+    except UnicodeDecodeError:
+        arreter(f"{notes} n'est pas enregistré en UTF-8. Dans le Bloc-notes : Fichier > Enregistrer sous > Codage : UTF-8.")
+    if not texte:
+        arreter(f"{notes} est vide : écrivez-y les nouveautés de la version.")
+    return texte
+
+
+def signer(version_ou_archive, notes):
+    if version_ou_archive.lower().endswith(".zip"):
+        archive = Path(version_ou_archive)
+        m = re.fullmatch(r"facturier-(.+)\.zip", archive.name)
+        if not m:
+            arreter(f"nom d'archive inattendu : {archive.name} (attendu facturier-<version>.zip)")
+        version = m.group(1)
+    else:
+        version = version_ou_archive
+        archive = DEPOT / "versions" / f"facturier-{version}.zip"
+    if not FORMAT_VERSION.fullmatch(version):
+        arreter(f"numéro de version invalide : {version} (attendu AAAA.MM.JJ-N)")
+    if not archive.exists():
+        arreter(f"archive introuvable : {archive}\nFabriquez-la d'abord : python outils\\signer_version.py archives {version}")
+    donnees = archive.read_bytes()
+    sha = hashlib.sha256(donnees).hexdigest()
+    # Ce qui est déjà publié (version.json à la racine) : jamais un numéro plus petit, jamais un autre contenu sous un
+    # numéro déjà publié (les postes déjà à ce numéro ne le recevraient jamais)
+    try:
+        publie = json.loads(MANIFESTE.read_text(encoding="utf-8-sig")).get("contenu") or {}
+    except (OSError, ValueError):
+        publie = {}
+    if publie.get("version"):
+        if num_version(version) < num_version(publie["version"]):
+            arreter(f"la version {publie['version']} est déjà publiée : on ne publie jamais un numéro plus petit (les postes le "
+                    f"refuseraient).\nPour retirer une mauvaise version, republiez l'ancien contenu sous un numéro PLUS GRAND.")
+        if publie["version"] == version and publie.get("sha256") != sha:
+            arreter(f"la version {version} est déjà publiée avec une autre archive : on ne change jamais une version publiée.\n"
+                    "Donnez un nouveau numéro de version (VERSION dans programme\\facturier.pyw), puis refaites les archives.")
     controler_archive(donnees, version)
-    installation = Path(archive).with_name(f"Facturier-installation-{version}.zip")
+    installation = archive.with_name(f"Facturier-installation-{version}.zip")
     if installation.exists() and lecture_seule(installation):
         arreter(f"{installation.name} contient des fichiers en lecture seule : {lecture_seule(installation)}")
     prive = lire_cle()
     verifier_correspondance(prive)
-    contenu = {"app": "facturier", "version": version, "notes": Path(notes).read_text(encoding="utf-8").strip(),
-               "url": url, "sha256": hashlib.sha256(donnees).hexdigest(), "taille": len(donnees),
+    url = URL_PUBLICATION + archive.name
+    contenu = {"app": "facturier", "version": version, "notes": lire_notes(notes),
+               "url": url, "sha256": sha, "taille": len(donnees),
                "expire": (date.today() + timedelta(days=VALIDITE_JOURS)).isoformat()}
     sig = ed25519.signer(prive, canonique(contenu))
     assert ed25519.verifier(ed25519.cle_publique(prive), canonique(contenu), sig)
-    sortie = Path(archive).with_name("version.json")
-    sortie.write_text(json.dumps({"contenu": contenu, "signature": sig.hex()}, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("Manifeste signé :", sortie)
+    tmp = MANIFESTE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"contenu": contenu, "signature": sig.hex()}, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, MANIFESTE)
+    print("Manifeste signé :", MANIFESTE)
+    print("Adresse de l'archive :", url)
+    print("Valable jusqu'au", contenu["expire"], ": publiez ENSEMBLE version.json et", archive.name,
+          "(et l'archive d'installation)." if installation.exists() else ".")
 
 
 def _ajouter(z, nom, donnees):
@@ -201,7 +260,17 @@ def _ajouter(z, nom, donnees):
     z.writestr(info, donnees)
 
 
+def _zip(fichiers):
+    import io
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, "w") as z:
+        for nom, donnees in fichiers:
+            _ajouter(z, nom, donnees)
+    return tampon.getvalue()
+
+
 def archives(version):
+    import io
     prog = DEPOT / "programme"
     if not FORMAT_VERSION.fullmatch(version):
         arreter(f"numéro de version invalide : {version} (attendu AAAA.MM.JJ-N)")
@@ -209,28 +278,36 @@ def archives(version):
     if not m or m.group(1) != version:
         arreter(f"programme\\facturier.pyw porte la version {m.group(1) if m else '?'} et non {version}")
     contenu = {n: (prog / n).read_bytes() for n in sorted(FICHIERS_PROGRAMME)}
-    sortie = DEPOT / "versions"
-    sortie.mkdir(exist_ok=True)
-    maj = sortie / f"facturier-{version}.zip"
     # Ordre voulu : facturier.pyw d'abord, la page en dernier, avec une copie de la page à côté. Un poste bloqué
     # par « lecture seule » (ancien programme) remplace tout sauf la page, et la nouvelle version la met en place.
     ordre = ["facturier.pyw", RATTRAPAGE] + [n for n in sorted(contenu) if n not in ("facturier.pyw", "facturier.html")] + ["facturier.html"]
-    with zipfile.ZipFile(maj, "w") as z:
-        for n in ordre:
-            _ajouter(z, n, contenu["facturier.html" if n == RATTRAPAGE else n])
-    inst = sortie / f"Facturier-installation-{version}.zip"
-    with zipfile.ZipFile(inst, "w") as z:
-        for n in ("Installer le Facturier.bat", "LISEZ-MOI.txt"):
-            _ajouter(z, "Facturier/" + n, (DEPOT / n).read_bytes())
-        for n in sorted(contenu):
-            _ajouter(z, "Facturier/programme/" + n, contenu[n])
-    controler_archive(maj.read_bytes(), version)
-    if lecture_seule(inst):
+    octets_maj = _zip((n, contenu["facturier.html" if n == RATTRAPAGE else n]) for n in ordre)
+    octets_inst = _zip([("Facturier/" + n, (DEPOT / n).read_bytes()) for n in ("Installer le Facturier.bat", "LISEZ-MOI.txt")]
+                       + [("Facturier/programme/" + n, contenu[n]) for n in sorted(contenu)])
+    # Tout est contrôlé en mémoire : sur une erreur, aucun fichier n'est écrit
+    controler_archive(octets_maj, version)
+    if lecture_seule(io.BytesIO(octets_inst)):
         arreter("archive d'installation incorrecte")
+    sortie = DEPOT / "versions"
+    maj, inst = sortie / f"facturier-{version}.zip", sortie / f"Facturier-installation-{version}.zip"
+    for chemin, octets in ((maj, octets_maj), (inst, octets_inst)):
+        if chemin.exists() and chemin.read_bytes() != octets:
+            arreter(f"{chemin.name} existe déjà avec un autre contenu : une archive publiée ne change jamais.\n"
+                    "Donnez un nouveau numéro de version (VERSION dans programme\\facturier.pyw). Si cette archive n'a jamais "
+                    "été publiée (pas encore envoyée sur GitHub), supprimez-la puis relancez la commande.")
+    sortie.mkdir(exist_ok=True)
+    for chemin, octets in ((maj, octets_maj), (inst, octets_inst)):
+        if chemin.exists():
+            print("Déjà fabriquée, identique :", chemin.name)
+            continue
+        tmp = chemin.with_name(chemin.name + ".tmp")
+        tmp.write_bytes(octets)
+        os.replace(tmp, chemin)
     print("Archive de mise à jour   :", maj)
     print("Archive d'installation   :", inst)
     print("Empreinte SHA-256 de l'archive d'installation (à dicter / envoyer par SMS à la personne qui installe) :")
-    print("   ", hashlib.sha256(inst.read_bytes()).hexdigest().upper())
+    print("   ", hashlib.sha256(octets_inst).hexdigest().upper())
+    print(f"Étape suivante : python outils\\signer_version.py signer {version} notes.txt")
 
 
 def canonique(contenu):
@@ -247,8 +324,11 @@ if __name__ == "__main__":
         ranger_cle()
     elif commande == "archives" and len(sys.argv) == 3:
         archives(sys.argv[2])
-    elif commande == "signer" and len(sys.argv) == 6:
+    elif commande == "signer" and len(sys.argv) == 4:
         signer(*sys.argv[2:])
+    elif commande == "signer":
+        arreter("usage : python outils\\signer_version.py signer <version> <notes.txt>\n"
+                "(l'adresse de téléchargement est maintenant déduite du nom de l'archive, et version.json est écrit à la racine)")
     else:
         print(__doc__)
         sys.exit(1)
