@@ -1292,7 +1292,10 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
     pris = {str(c.get("numero")) for c in tous()}
     renum = []                                   # (ancien code, fiche source, nouveau code)
     rapport = {"ajoutes": 0, "modifies": 0, "renumerotes": []}
-    maxi = [max([_code(n) for n in pris] + [0])]  # plus grand code pris, tenu à jour (même résultat qu'un max à chaque fois)
+    # Plus grand code pris, tenu à jour. Il compte aussi les codes de la source : une fiche en conflit reçoit un code
+    # après tous ceux de la source, au lieu de décaler en cascade toutes les fiches suivantes (C00001→C00002→…)
+    codes_source = [_code(c.get("numero")) for c in list(src_actifs or []) + list(src_supprimes or []) if isinstance(c, dict) and c.get("numero")]
+    maxi = [max([_code(n) for n in pris] + codes_source + [0])]
     vus_src = set()
     for liste, a_la_corbeille in ((src_actifs or [], False), (src_supprimes or [], True)):
         for c in liste:
