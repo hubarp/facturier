@@ -6,3 +6,8 @@ __pycache__/
 cle_privee*.txt
 identifiants.txt
 facturier_backup_*.json
+# Fichiers locaux du programme (mode test, mise à jour en cours)
+MODE_TEST
+maj_en_cours.txt
+programme_precedent.nouveau/
+programme_precedent.ancien/

@@ -17,6 +17,7 @@ import re
 import secrets
 import shutil
 import socket
+import stat
 import sys
 import threading
 import time
@@ -33,10 +34,19 @@ from pathlib import Path
 
 VERSION = "2026.10.20-6"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
+# Réglages de test (autre serveur, autre clé de signature…) : pris en compte seulement si un fichier « MODE_TEST »
+# est posé à la main dans le dossier « programme ». Une mise à jour ne peut jamais livrer ce fichier (liste blanche).
+MODE_TEST = (ICI / "MODE_TEST").is_file()
+
+
+def reglage_test(nom, defaut):
+    return os.environ.get(nom, defaut) if MODE_TEST else defaut
+
+
 DONNEES = Path(os.environ.get("FACTURIER_DONNEES") or ICI.parent / "donnees")
 PORT = int(os.environ.get("FACTURIER_PORT", "8765"))
-API = os.environ.get("SUPER_PDP_API", "https://api.superpdp.tech").rstrip("/")
-VIES = os.environ.get("FACTURIER_VIES", "https://ec.europa.eu/taxation_customs/vies/rest-api").rstrip("/")
+API = reglage_test("SUPER_PDP_API", "https://api.superpdp.tech").rstrip("/")
+VIES = reglage_test("FACTURIER_VIES", "https://ec.europa.eu/taxation_customs/vies/rest-api").rstrip("/")
 FICHIER_ENTREPRISES = DONNEES / "entreprises.json"    # entreprises gérées ; la principale vit directement dans « donnees »
 FICHIER_CLIENTS = DONNEES / "clients.json"            # fichier client commun à toutes les entreprises
 FICHIER_FORMAT = DONNEES / "format.json"              # numéro de la dernière transformation de données appliquée
@@ -45,29 +55,37 @@ JOURNAL = DONNEES / "journal.txt"
 PROFIL_NAVIGATEUR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Facturier" / "fenetre"
 ARRET = secrets.token_urlsafe(24)
 PRECEDENT = ICI.parent / "programme_precedent"            # version précédente, pour revenir en arrière
-DEPOT = os.environ.get("FACTURIER_DEPOT", "hubarp/facturier")
-MANIFESTE_URL = os.environ.get("FACTURIER_MANIFESTE", f"https://raw.githubusercontent.com/{DEPOT}/main/version.json")
-URL_AUTORISEE = os.environ.get("FACTURIER_URL_MAJ", f"https://raw.githubusercontent.com/{DEPOT}/main/versions/")
+DEPOT = reglage_test("FACTURIER_DEPOT", "hubarp/facturier")
+MANIFESTE_URL = reglage_test("FACTURIER_MANIFESTE", f"https://raw.githubusercontent.com/{DEPOT}/main/version.json")
+URL_AUTORISEE = reglage_test("FACTURIER_URL_MAJ", f"https://raw.githubusercontent.com/{DEPOT}/main/versions/")
 # Clé publique de signature : seule une version signée par la clé privée d'Antoine peut être installée
-CLE_PUBLIQUE = bytes.fromhex(os.environ.get("FACTURIER_CLE_PUBLIQUE", "f7365461d6fafc0ac4e88533bd8cd2c4680806422f919256f058c9423f627f53"))
+CLE_PUBLIQUE = bytes.fromhex(reglage_test("FACTURIER_CLE_PUBLIQUE", "f7365461d6fafc0ac4e88533bd8cd2c4680806422f919256f058c9423f627f53"))
+# Fichiers du programme : une mise à jour ne peut livrer que ceux-là (jamais un module Python, un flux NTFS, etc.)
+FICHIERS_PROGRAMME = {"facturier.pyw", "facturier.html", "facturier.ico", "facturier.png", "installer.ps1"}
+FICHIERS_OBLIGATOIRES = {"facturier.pyw", "facturier.html"}
+# Rattrapage des postes bloqués par l'attribut « lecture seule » (installés par l'Explorateur depuis les archives
+# 2026.10.20-2 à -5) : l'archive porte en plus une copie exacte de facturier.html sous ce nom ; l'ancien programme
+# l'écrit sans encombre, et la nouvelle version la met en place à son lancement (finir_installation).
+RATTRAPAGE = "facturier.html.nouveau"
+FORMAT_VERSION = re.compile(r"\d{4}\.\d{2}\.\d{2}-\d{1,3}")
 SESSION_HERITEE = bool(os.environ.get("FACTURIER_SESSION"))
 JETON = os.environ.pop("FACTURIER_SESSION", "") or secrets.token_urlsafe(24)  # gardé lors d'une mise à jour
 PREUVE = secrets.token_urlsafe(24)  # prouve l'identité du serveur ; contrairement à ARRET, jamais envoyée sur le réseau
 CODES = {}   # codes d'ouverture à usage unique (60 s) : seule la fenêtre ouverte par le programme reçoit le cookie
 SANS_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 127.0.0.1 : jamais par un proxy
 PAGE_ICONE = "<!doctype html><meta charset=utf-8><title>Facturier</title><p style='font:16px sans-serif;margin:3em'>Ouvrez le Facturier par son icône.</p>"
-
-
-def nouveau_code():
-    code = secrets.token_urlsafe(24)
-    CODES[code] = time.time() + 60
-    return code
 HOTES = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
 ORIGINES = {f"http://{h}" for h in HOTES}
 # Rejet (technique) : la facture est réputée non émise, elle peut être corrigée et redéposée sous le même numéro.
 # Refus (fr:210, décision du client) : la facture est close ; elle ne se renvoie jamais (avoir + nouvelle facture).
 STATUTS_ECHEC = {"fr:213", "api:invalid", "api:rejected", "fr:501"}
 STATUT_REFUS = "fr:210"
+
+
+def nouveau_code():
+    code = secrets.token_urlsafe(24)
+    CODES[code] = time.time() + 60
+    return code
 
 
 # ---------------------------------------------------------------- outils
@@ -598,6 +616,33 @@ def lire_manifeste():
         raise ErreurAPI(400, "Version refusée : sa signature n'est pas valide")
     if contenu.get("app") != "facturier" or not str(contenu.get("url", "")).startswith(URL_AUTORISEE):
         raise ErreurAPI(400, "Version refusée : adresse de téléchargement inattendue")
+    if not FORMAT_VERSION.fullmatch(str(contenu.get("version", ""))):
+        raise ErreurAPI(400, "Version refusée : numéro de version invalide")
+    # Date limite signée avec le manifeste (obligatoire à partir de cette version) : un manifeste ancien, rejoué par
+    # quelqu'un qui contrôlerait le serveur, finit par être signalé au lieu de « geler » le poste sans bruit.
+    expire = str(contenu.get("expire", ""))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expire) or expire < datetime.now().strftime("%Y-%m-%d"):
+        journal(f"Manifeste expiré ou date illisible ({expire})")
+        raise ErreurAPI(400, f"Les informations de mise à jour ont expiré ({expire or 'sans date'}) : prévenez Antoine, "
+                             "il doit les signer à nouveau. Le Facturier continue de fonctionner normalement.")
+    # On retient aussi la plus haute version déjà annoncée : un serveur qui se met à présenter un manifeste plus ancien
+    # (retour en arrière du canal de mise à jour) est signalé au lieu de passer pour « à jour ».
+    vue = DONNEES / "maj_vue.txt"
+    try:
+        deja = vue.read_text(encoding="utf-8").strip()
+    except OSError:
+        deja = ""
+    reference = deja if FORMAT_VERSION.fullmatch(deja) else ""
+    if reference and num_version(contenu["version"]) < num_version(reference):
+        journal(f"Manifeste plus ancien ({contenu['version']}) que celui déjà vu ({reference})")
+        raise ErreurAPI(400, f"Le serveur des mises à jour présente la version {contenu['version']}, plus ancienne que la "
+                             f"{reference} qu'il annonçait déjà. Si le message est encore là demain, prévenez Antoine.")
+    if not reference or num_version(contenu["version"]) > num_version(reference):
+        try:
+            DONNEES.mkdir(parents=True, exist_ok=True)
+            vue.write_text(contenu["version"], encoding="utf-8")
+        except OSError:
+            pass
     return contenu
 
 
@@ -655,38 +700,197 @@ def sauvegarder_donnees(nom, ecraser=True, seulement=None):
 
 
 def fichiers_programme(dossier):
-    return {f.name: f.read_bytes() for f in dossier.iterdir() if f.is_file() and not f.name.endswith(".tmp")}
+    return {f.name: f.read_bytes() for f in dossier.iterdir() if f.is_file() and f.name in FICHIERS_PROGRAMME}
+
+
+def rendre_modifiable(chemin):
+    """Retire l'attribut Windows « lecture seule » (posé par certains extracteurs de zip) : sans cela, os.replace
+    échoue avec « Accès refusé » (WinError 5) et plus aucune mise à jour ne passe."""
+    try:
+        mode = chemin.stat().st_mode          # sous Windows, S_IWRITE absent = attribut « lecture seule »
+        if not mode & stat.S_IWRITE:
+            os.chmod(chemin, stat.S_IMODE(mode) | stat.S_IWRITE)
+    except OSError:
+        pass
+
+
+def _effacer_dossier(dossier):
+    def forcer(fonction, chemin, _exc):
+        rendre_modifiable(Path(chemin))
+        fonction(chemin)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(dossier, onexc=forcer)
+    else:
+        shutil.rmtree(dossier, onerror=forcer)
+
+
+MARQUEUR_MAJ = ICI / "maj_en_cours.txt"   # présent seulement entre « tous les .tmp écrits » et « tous remplacés »
+FIN_MARQUEUR = "-- liste complète --"     # un marqueur coupé en cours d'écriture (sans cette ligne) est ignoré
+PREPARE = PRECEDENT.with_name(PRECEDENT.name + ".nouveau")  # copie de la version actuelle, pendant une installation
+MIS_DE_COTE = PRECEDENT.with_name(PRECEDENT.name + ".ancien")  # ancienne « précédente », le temps de l'échange
 
 
 def ecrire_programme(fichiers):
-    for nom, contenu in fichiers.items():
+    """1) tous les fichiers sont écrits à côté (.tmp) et vidés sur le disque ; 2) un marqueur liste les fichiers à
+    remplacer ; 3) remplacements, facturier.pyw en dernier ; 4) marqueur effacé. Une coupure de courant pendant 3) est
+    terminée au lancement suivant par finir_installation() : jamais de programme à moitié ancien, à moitié nouveau."""
+    noms = sorted(fichiers, key=lambda n: n == "facturier.pyw")
+    for nom in noms:
         tmp = ICI / (nom + ".tmp")
-        tmp.write_bytes(contenu)
-        os.replace(tmp, ICI / nom)
+        rendre_modifiable(tmp)
+        with open(tmp, "wb") as fh:
+            fh.write(fichiers[nom])
+            fh.flush()
+            os.fsync(fh.fileno())
+    with open(MARQUEUR_MAJ, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(noms + [FIN_MARQUEUR]))
+        fh.flush()
+        os.fsync(fh.fileno())
+    for nom in noms:
+        rendre_modifiable(ICI / nom)
+        os.replace(ICI / (nom + ".tmp"), ICI / nom)
+    MARQUEUR_MAJ.unlink()
+
+
+def finir_installation():
+    """Au lancement : termine des remplacements interrompus (coupure de courant), efface les .tmp abandonnés.
+    Renvoie True si facturier.pyw vient d'être remplacé (il faut alors relancer le nouveau programme)."""
+    pyw_remplace = False
+    try:
+        if MARQUEUR_MAJ.exists():
+            lignes = MARQUEUR_MAJ.read_text(encoding="utf-8", errors="replace").split("\n")
+            if lignes[-1] == FIN_MARQUEUR:
+                for nom in lignes[:-1]:
+                    tmp = ICI / (nom + ".tmp")
+                    if nom in FICHIERS_PROGRAMME and tmp.exists():
+                        rendre_modifiable(ICI / nom)
+                        os.replace(tmp, ICI / nom)
+                        pyw_remplace |= nom == "facturier.pyw"
+                journal("Mise à jour interrompue terminée au lancement")
+            MARQUEUR_MAJ.unlink()
+        if PREPARE.exists():
+            if version_de(PREPARE) and version_de(PREPARE) != version_de(ICI):
+                garder_comme_precedente()                  # installation terminée : l'ancienne version devient la « précédente »
+            else:
+                _effacer_dossier(PREPARE)                  # installation jamais commencée : le vrai retour arrière reste
+        if MIS_DE_COTE.exists():                   # échange de « programme_precedent » interrompu
+            if PRECEDENT.exists():
+                _effacer_dossier(MIS_DE_COTE)
+            else:
+                os.replace(MIS_DE_COTE, PRECEDENT)
+        for nom in FICHIERS_PROGRAMME:
+            if (ICI / (nom + ".tmp")).exists():
+                rendre_modifiable(ICI / (nom + ".tmp"))
+                (ICI / (nom + ".tmp")).unlink()
+        for nom in FICHIERS_PROGRAMME:
+            rendre_modifiable(ICI / nom)      # postes installés depuis une archive qui posait « lecture seule »
+        if (ICI / RATTRAPAGE).exists():       # page livrée à côté par un ancien programme bloqué : mise en place
+            rendre_modifiable(ICI / RATTRAPAGE)
+            os.replace(ICI / RATTRAPAGE, ICI / "facturier.html")
+            journal("Page du Facturier mise en place (rattrapage « lecture seule »)")
+    except OSError as e:
+        journal(f"Remise en ordre des fichiers du programme impossible : {e!r}")
+    return pyw_remplace
 
 
 def installer_programme(fichiers):
-    """Remplace les fichiers du programme ; l'ancienne version part dans « programme_precedent »."""
+    """Remplace les fichiers du programme ; l'ancienne version part dans « programme_precedent », mais seulement
+    une fois l'installation réussie (un échec laisse intact le vrai retour arrière)."""
     ancien = fichiers_programme(ICI)
-    # La copie complète est faite à côté, puis remplace l'ancienne d'un coup : une coupure ne laisse jamais un
-    # « programme_precedent » vide ou incomplet
-    neuf = PRECEDENT.with_name(PRECEDENT.name + "_nouveau")
-    vieux = PRECEDENT.with_name(PRECEDENT.name + "_ancien")
-    for d in (neuf, vieux):
-        if d.exists():
-            shutil.rmtree(d)
-    neuf.mkdir()
+    prepare = PREPARE
+    if prepare.exists():
+        _effacer_dossier(prepare)
+    prepare.mkdir()
     for nom, contenu in ancien.items():
-        (neuf / nom).write_bytes(contenu)
-    if PRECEDENT.exists():
-        os.replace(PRECEDENT, vieux)
-    os.replace(neuf, PRECEDENT)
-    shutil.rmtree(vieux, ignore_errors=True)
+        (prepare / nom).write_bytes(contenu)
     try:
         ecrire_programme(fichiers)
     except OSError:
-        ecrire_programme(ancien)  # échec en cours de route : on remet tout comme avant
+        try:
+            ecrire_programme(ancien)  # échec en cours de route : on remet tout comme avant
+            for nom in set(fichiers) - set(ancien):
+                try:
+                    (ICI / nom).unlink()
+                except OSError:
+                    pass
+        finally:
+            _effacer_dossier(prepare)
         raise
+    try:
+        garder_comme_precedente()
+    except OSError as e:                # la nouvelle version est bien en place ; finir_installation() terminera
+        journal(f"Copie de la version précédente pas encore rangée : {e!r}")
+
+
+def garder_comme_precedente():
+    """« programme_precedent » remplacé d'un coup par la copie préparée : l'ancienne copie est d'abord mise de côté par
+    un simple renommage, et n'est effacée qu'une fois la nouvelle en place (une coupure ne laisse jamais de dossier
+    vide ou incomplet ; finir_installation() termine au lancement suivant)."""
+    if PRECEDENT.exists():
+        if MIS_DE_COTE.exists():
+            _effacer_dossier(MIS_DE_COTE)
+        os.replace(PRECEDENT, MIS_DE_COTE)
+    os.replace(PREPARE, PRECEDENT)
+    try:
+        _effacer_dossier(MIS_DE_COTE)
+    except OSError:
+        pass
+
+
+def verifier_archive(archive, version):
+    """Contenu d'une archive de mise à jour, après contrôle : uniquement les fichiers connus du programme (liste
+    blanche exacte, sans doublon), et un facturier.pyw lisible qui porte bien la version annoncée par le manifeste."""
+    if not isinstance(version, str) or not FORMAT_VERSION.fullmatch(version):
+        raise ErreurAPI(400, "Version annoncée invalide : rien n'a été modifié")
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as z:
+            noms = z.namelist()
+            if len(noms) != len(set(noms)) or not set(noms) <= FICHIERS_PROGRAMME | {RATTRAPAGE} or not FICHIERS_OBLIGATOIRES <= set(noms):
+                raise ErreurAPI(400, "Archive de mise à jour inattendue : rien n'a été modifié")
+            fichiers = {n: z.read(n) for n in noms}
+    except ErreurAPI:
+        raise
+    except (zipfile.BadZipFile, OSError, EOFError, ValueError, NotImplementedError) as e:
+        raise ErreurAPI(400, f"Archive de mise à jour illisible ({e}) : rien n'a été modifié")
+    if RATTRAPAGE in fichiers and fichiers.pop(RATTRAPAGE) != fichiers["facturier.html"]:
+        raise ErreurAPI(400, "Archive de mise à jour inattendue : rien n'a été modifié")
+    try:
+        source = fichiers["facturier.pyw"].decode("utf-8-sig")
+        compile(source, "facturier.pyw", "exec")  # refuse un programme illisible avant de toucher à quoi que ce soit
+    except (UnicodeDecodeError, SyntaxError, ValueError):
+        raise ErreurAPI(400, "Programme de mise à jour illisible : rien n'a été modifié")
+    m = re.search(r'^VERSION = "([^"]+)"', source, re.M)
+    if not m or m.group(1) != version:
+        raise ErreurAPI(400, "La version livrée ne correspond pas à la version annoncée : rien n'a été modifié")
+    return fichiers
+
+
+VERROU_MAJ = threading.Lock()
+MAJ_FAITE = threading.Event()   # installation ou retour déjà fait par ce programme : attendre le redémarrage
+
+
+def _une_seule_maj(action):
+    """Une seule installation ou un seul retour à la fois, et aucun second après un premier réussi : le programme
+    va être remplacé, et un second passage écraserait « programme_precedent » (le vrai retour arrière)."""
+    def emballage(q, corps):
+        if MAJ_FAITE.is_set():
+            raise ErreurAPI(409, "La mise à jour est déjà faite : patientez, le Facturier redémarre")
+        if not VERROU_MAJ.acquire(blocking=False):
+            raise ErreurAPI(409, "Une mise à jour est déjà en cours : patientez, le Facturier redémarre")
+        try:
+            return action(q, corps)
+        finally:
+            VERROU_MAJ.release()
+    return emballage
+
+
+def installer_ou_expliquer(fichiers):
+    try:
+        installer_programme(fichiers)
+    except OSError as e:
+        journal(f"Remplacement des fichiers du programme impossible : {e!r}")
+        raise ErreurAPI(400, f"Les fichiers du programme n'ont pas pu être remplacés ({e}). Le Facturier reste dans sa "
+                             "version actuelle : fermez-le, rouvrez-le et réessayez, ou prévenez Antoine.")
 
 
 RELEVE = threading.Event()   # la version suivante a demandé l'arrêt de celle-ci (elle a démarré)
@@ -709,12 +913,14 @@ def redemarrer(delai=60):
     def surveiller():
         if RELEVE.wait(delai):
             return
-        try:
-            installer_programme(fichiers_programme(PRECEDENT))   # « programme_precedent » = cette version-ci
-            (DONNEES / "maj_ignoree.txt").write_text(version_de(PRECEDENT) or "", encoding="utf-8")
-            journal(f"La nouvelle version n'a pas démarré en {delai} s : retour automatique à la version {VERSION}")
-        except OSError as e:
-            journal(f"La nouvelle version n'a pas démarré ; retour automatique impossible : {e!r}")
+        with VERROU_MAJ:                 # même verrou que l'installation et le retour : jamais deux à la fois
+            try:
+                installer_programme(fichiers_programme(PRECEDENT))   # « programme_precedent » = cette version-ci
+                (DONNEES / "maj_ignoree.txt").write_text(version_de(PRECEDENT) or "", encoding="utf-8")
+                journal(f"La nouvelle version n'a pas démarré en {delai} s : retour automatique à la version {VERSION}")
+                MAJ_FAITE.clear()        # cette version continue de servir : les boutons de mise à jour redeviennent utilisables
+            except OSError as e:
+                journal(f"La nouvelle version n'a pas démarré ; retour automatique impossible : {e!r}")
     threading.Timer(0.5, lancer_programme).start()
     threading.Thread(target=surveiller, daemon=True).start()
 
@@ -742,21 +948,18 @@ def retour_automatique(raison):
     return precedente
 
 
+@_une_seule_maj
 def act_maj_installer(_q, _corps):
     c = lire_manifeste()
-    if num_version(c["version"]) <= num_version(VERSION):
+    if num_version(c.get("version")) <= num_version(VERSION):
         raise ErreurAPI(400, "Le Facturier est déjà à jour")
     code, _ct, archive = requete("GET", c["url"], timeout=180)
     if code != 200 or len(archive) != c.get("taille") or hashlib.sha256(archive).hexdigest() != c.get("sha256"):
         raise ErreurAPI(400, "Téléchargement incomplet ou altéré : rien n'a été modifié, réessayez plus tard")
-    with zipfile.ZipFile(io.BytesIO(archive)) as z:
-        noms = [n for n in z.namelist() if not n.endswith("/")]
-        if any("/" in n or "\\" in n or n.startswith(".") or ".." in n for n in noms) or not {"facturier.pyw", "facturier.html"} <= set(noms):
-            raise ErreurAPI(400, "Archive de mise à jour inattendue : rien n'a été modifié")
-        fichiers = {n: z.read(n) for n in noms}
-    compile(fichiers["facturier.pyw"], "facturier.pyw", "exec")  # refuse un programme illisible avant de toucher à quoi que ce soit
+    fichiers = verifier_archive(archive, c["version"])
     sauvegarder_donnees(f"avant_maj_{VERSION}_vers_{c['version']}")
-    installer_programme(fichiers)
+    installer_ou_expliquer(fichiers)
+    MAJ_FAITE.set()
     try:
         (DONNEES / "maj_ignoree.txt").unlink()
     except OSError:
@@ -766,13 +969,15 @@ def act_maj_installer(_q, _corps):
     return {"ok": True, "version": c["version"]}
 
 
+@_une_seule_maj
 def act_maj_retour(_q, _corps):
     precedente = version_de(PRECEDENT)
-    if not precedente:
+    if not precedente or not FORMAT_VERSION.fullmatch(precedente):
         raise ErreurAPI(400, "Aucune version précédente à restaurer")
     sauvegarder_donnees(f"avant_retour_{VERSION}_vers_{precedente}")
     retour = fichiers_programme(PRECEDENT)
-    installer_programme(retour)            # la version actuelle devient à son tour la « précédente »
+    installer_ou_expliquer(retour)         # la version actuelle devient à son tour la « précédente »
+    MAJ_FAITE.set()
     (DONNEES / "maj_ignoree.txt").write_text(VERSION, encoding="utf-8")
     journal(f"Retour à la version {precedente} (depuis {VERSION})")
     redemarrer()
@@ -1611,6 +1816,10 @@ class Gestionnaire(BaseHTTPRequestHandler):
             journal(f"{methode} {u.path} : erreur {e.code} {str(msg)[:200]}")
             return self.envoyer(502 if e.code >= 500 else (e.code if e.code in (403, 404, 409) else 400), {"erreur": msg, "code": e.code, "detail": e.corps if not isinstance(e.corps, str) else None})
         except OSError as e:
+            if u.path.startswith("/api/maj"):       # fichier local (disque, droits), pas Super PDP
+                journal(f"{methode} {u.path} : erreur de fichier {e!r}")
+                return self.envoyer(500, {"erreur": f"Mise à jour impossible ({e}). Le Facturier reste dans sa version "
+                                                    "actuelle : fermez-le, rouvrez-le et réessayez, ou prévenez Antoine."})
             if getattr(e, "filename", None) and not isinstance(e, urllib.error.URLError):
                 # Fichier du PC (données, sauvegardes) : pas un problème de connexion
                 journal(f"{methode} {u.path} : fichier inaccessible ({e})")
@@ -1761,6 +1970,9 @@ def main():
         elif not version_active():
             message("Le Facturier est déjà en cours de démarrage ou d'arrêt : patientez quelques secondes puis rouvrez-le.")
         return
+    if finir_installation():
+        lancer_programme(fenetre)  # facturier.pyw vient d'être remplacé : c'est la nouvelle version qui doit tourner
+        return                    # (le verrou est libéré à la sortie ; la nouvelle version l'attend)
     for essai in range(10):
         try:
             serveur = Serveur(("127.0.0.1", PORT), Gestionnaire)  # uniquement ce PC, jamais le réseau
@@ -1797,7 +2009,8 @@ def main():
         os.replace(tmp, FICHIER_DEMARRAGE)
     except OSError:
         pass
-    journal(f"Démarrage version {VERSION} ({page_facturier().name}, API {API})")
+    journal(f"Démarrage version {VERSION} ({page_facturier().name}, API {API}, clé {CLE_PUBLIQUE.hex()[:16]})"
+            + (" — MODE TEST : réglages pris dans les variables d'environnement" if MODE_TEST else ""))
     print(f"Facturier actif à l'adresse {adresse}")
     if fenetre:
         threading.Timer(0.5, lambda: ouvrir_fenetre(adresse + "ouvrir?code=" + nouveau_code())).start()
