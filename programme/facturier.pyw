@@ -33,6 +33,7 @@ import subprocess
 import uuid
 import webbrowser
 import zipfile
+import zlib
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -454,6 +455,38 @@ def act_valider(q, corps):
     return {"valide": valide, "erreurs": erreurs, "rapport": rapport}
 
 
+def empreintes_deposees(ident):
+    """Empreintes SHA-256 du XML Factur-X (CII) de la facture déposée `ident`, lue chez Super PDP : le XML embarqué
+    dans le PDF (flux compressé ou non), ou le fichier XML lui-même. Ensemble vide si rien n'a pu être lu."""
+    if not str(ident or "").isdigit():
+        return set()
+    for chemin, params in ((f"invoices/{ident}", {"format": "original"}), (f"invoices/{ident}/download", None)):
+        try:
+            code, _ct, brut = SPDP.appel("GET", chemin, params=params)
+        except (ErreurAPI, OSError):
+            continue
+        if code >= 400 or not brut:
+            continue
+        res = set()
+        if brut.lstrip().startswith(b"<") and b"CrossIndustryInvoice" in brut[:4000]:
+            res.add(hashlib.sha256(brut).hexdigest())
+        for m in re.finditer(rb"stream\r?\n", brut):
+            debut = m.end()
+            if brut[debut:debut + 5] == b"<?xml":           # flux non compressé
+                fin = brut.find(b"endstream", debut)
+                x = brut[debut:fin].rstrip(b"\r\n") if fin > 0 else b""
+            else:
+                try:
+                    x = zlib.decompressobj().decompress(brut[debut:debut + 20_000_000], 10_000_000)
+                except zlib.error:
+                    continue
+            if b"CrossIndustryInvoice" in x[:4000]:
+                res.add(hashlib.sha256(x).hexdigest())
+        if res:
+            return res
+    return set()
+
+
 def act_envoyer(q, corps):
     numero = q.get("numero", [""])[0].strip()
     if not numero or not corps or not corps.startswith(b"%PDF"):
@@ -478,6 +511,13 @@ def act_envoyer(q, corps):
         if codes & STATUTS_ECHEC:
             continue
         if emp and connu.get("empreinte") != emp:
+            if not connu and emp in empreintes_deposees(fac.get("id")):
+                # Absente du registre (déposée par une version précédente dont la réponse s'est perdue, registre effacé)
+                # mais même contenu chez Super PDP : c'est bien cette facture, déjà déposée
+                registre[numero] = {"empreinte": emp, "id": fac.get("id"), "le": datetime.now().isoformat(timespec="seconds"), "retrouvee": True}
+                ecrire_json(fichier_envois(), registre)
+                journal(f"Envoi {numero} ignoré : déjà déposée (id {fac.get('id')}), contenu identique vérifié chez Super PDP")
+                return {"envoye": True, "deja": True, "facture": fac}
             # contenu corrigé après un envoi resté sans réponse, ou numéro réutilisé (sauvegarde ancienne, autre PC)
             raise ErreurAPI(409, f"Le n° {numero} est déjà utilisé sur Super PDP (facture id {fac.get('id')}) par une facture "
                                  "différente de celle-ci : rien n'a été envoyé. Vérifiez la numérotation ; une correction se fait par avoir.")
