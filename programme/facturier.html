@@ -2336,13 +2336,16 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         else if (form.lignes.some(l => estExceptionnel(l) && (!String(l.libelle || '').trim() || l.prixHT === '' || isNaN(parseFloat(l.prixHT)) || parseFloat(l.prixHT) < 0)))
           errs.lignes = simple ? 'Chaque ligne : un intitulé et un prix' : 'Produit exceptionnel : indiquez un intitulé et un prix'
         setErrors(errs);
-        return Object.keys(errs).length === 0;
+        return errs;
       };
+      const LIBELLES_ERREUR = { clientId: 'Client', transporteur: 'Transporteur', plaque: 'Immatriculation', prixTransport: 'Frais de transport', tauxTVA: 'Taux de TVA', remise: 'Remise', lignes: 'Produits' };
+      const messageErreurs = (errs) => 'À corriger : ' + Object.keys(errs).map(k => `${LIBELLES_ERREUR[k] || k} (${errs[k]})`).join(', ');
 
       const saveFacture = () => {
-        if (!validate()) { showToast('Champs obligatoires manquants'); return; }
+        const errs = validate();
+        if (Object.keys(errs).length) { showToast(messageErreurs(errs)); return; }
         const { vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles } = calculs();
-        const facture = { ...form, mode: estSimple(data) ? 'simple' : 'complet', lignes: figerLignes(form, data), client: data.clients.find(c => c.numero === form.clientId), vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles, updatedAt: new Date().toISOString() };
+        const facture = { ...form, remise: parseFloat(form.remise) || 0, mode: estSimple(data) ? 'simple' : 'complet', lignes: figerLignes(form, data), client: data.clients.find(c => c.numero === form.clientId), vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles, updatedAt: new Date().toISOString() };
         if (editIndex !== null) {
           const updated = [...data.factures]; updated[editIndex] = facture;
           updateData({ factures: updated });
@@ -2536,7 +2539,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                     <option value="0">0 % (Export)</option>
                   </select>
                 </div>
-                <div className="form-group"><label>Remise (%)</label><input type="number" min="0" max="100" value={form.remise} onChange={e => setForm({...form, remise: parseFloat(e.target.value) || 0})} /></div>
+                <div className={`form-group ${errors.remise ? 'error' : ''}`}><label>Remise (%) {errors.remise && <span className="error-msg">({errors.remise})</span>}</label><input type="number" min="0" max="100" step="any" value={form.remise} onChange={e => setForm({...form, remise: e.target.value})} onBlur={e => setForm(f => ({...f, remise: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0)}))} className={errors.remise ? 'error' : ''} /></div>
                 <div className="form-group">
                   <label>Règlement</label>
                   <select value={form.reglement} onChange={e => setForm({...form, reglement: e.target.value})}>

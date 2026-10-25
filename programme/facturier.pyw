@@ -1483,16 +1483,20 @@ def facture_figee(f):
     return bool(ef.get("id") or ef.get("deposeeLe")) and ef.get("statut") not in STATUTS_ECHEC
 
 
-def controler_factures(actuel, d):
+def doublons_factures(x):
+    """Numéros présents plusieurs fois (factures + corbeille)."""
+    vus, dbl = set(), set()
+    for f in ((x or {}).get("factures") or []) + ((x or {}).get("facturesSupprimes") or []):
+        n = str(f.get("numero") or "") if isinstance(f, dict) else ""
+        (dbl if n in vus else vus).add(n)
+    return dbl - {""}
+
+
+def controler_factures(actuel, d, toleres=frozenset()):
     """Règles minimales, même si la page a un défaut : numéros uniques, une facture déposée ne disparaît pas et son
-    contenu ne change pas. Code 422 (et non 409, que la page prend pour un conflit entre fenêtres)."""
-    def doublons(x):
-        vus, dbl = set(), set()
-        for f in (x.get("factures") or []) + (x.get("facturesSupprimes") or []):
-            n = str(f.get("numero") or "") if isinstance(f, dict) else ""
-            (dbl if n in vus else vus).add(n)
-        return dbl - {""}
-    nouveaux = doublons(d) - doublons(actuel or {})          # un doublon ancien ne bloque pas l'enregistrement
+    contenu ne change pas. Code 422 (et non 409, que la page prend pour un conflit entre fenêtres).
+    toleres : doublons déjà présents dans une sauvegarde importée (données d'une ancienne version), acceptés tels quels."""
+    nouveaux = doublons_factures(d) - doublons_factures(actuel) - set(toleres)   # un doublon ancien ne bloque pas
     if nouveaux:
         raise ErreurAPI(422, f"Numéro de facture en double ({', '.join(sorted(nouveaux))}) : rien n'a été enregistré")
     nouvelles = {str(f.get("numero")): f for f in d.get("factures") or [] if isinstance(f, dict)}
@@ -1625,9 +1629,14 @@ def act_importer(_q, corps):
             raise ErreurAPI(428, {"message": "Cette sauvegarde change les coordonnées de l'entreprise : confirmation nécessaire", "ecarts": ecarts})
         if ecarts:
             journal(f"Import : {len(ecarts)} coordonnée(s) changée(s) ({', '.join(e.split(' :')[0] for e in ecarts)}), confirmé dans la fenêtre")
-        sauvegarder_donnees(f"avant_import_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=getattr(CTX, "entreprise", None) or "principale")
+        # Doublons déjà présents dans la sauvegarde (une ancienne version les permettait) : importés tels quels ;
+        # seul un doublon CRÉÉ par la fusion avec les factures actuelles est refusé
+        anciens = doublons_factures(d)
         gardees = conserver_factures(actuel, d)
-        controler_factures(actuel, d)
+        controler_factures(actuel, d, toleres=anciens)
+        if anciens:
+            journal(f"Import : numéros déjà en double dans la sauvegarde, importés tels quels ({', '.join(sorted(anciens))})")
+        sauvegarder_donnees(f"avant_import_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=getattr(CTX, "entreprise", None) or "principale")
         d["_revision"] = int((actuel or {}).get("_revision") or 0) + 1   # les fenêtres ouvertes avant l'import ne peuvent plus écrire
         # En mode « ajout », la corbeille de la sauvegarde ne déplace ni ne modifie aucune fiche existante : elle sert
         # seulement à rattacher ses factures aux bonnes fiches (ajoutées à la corbeille commune si elles sont inconnues)
