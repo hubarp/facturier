@@ -4,11 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Facturier</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- Bibliothèques en version exacte, avec leur empreinte (integrity) : un fichier modifié sur le serveur est refusé par le navigateur.
+       Changer de version = recalculer l'empreinte (openssl dgst -sha384 -binary fichier | openssl base64 -A). -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" integrity="sha384-1qlE7MZPM2pHD/pBZCU/yB8UCP52RYL8bge/qNdfNBCWToySp8/M+JL2waXU4hjJ" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -280,6 +282,16 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // Sans les bibliothèques (pas d'internet, ou fichier refusé car modifié) : message lisible au lieu d'une page blanche
+    window.addEventListener('load', () => {
+      if (window.React && window.ReactDOM && window.Babel) return;
+      const p = document.createElement('p');
+      p.style.cssText = 'font:16px sans-serif;margin:3em;max-width:40em;line-height:1.5';
+      p.textContent = "Le Facturier n'a pas pu charger ses composants depuis internet. Vérifiez la connexion, puis fermez cette fenêtre et rouvrez le Facturier. Si le message revient alors qu'internet fonctionne, prévenez Antoine. Vos données ne sont pas touchées.";
+      document.getElementById('root').appendChild(p);
+    });
+  </script>
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
 
@@ -662,13 +674,20 @@
       police: 'https://cdn.jsdelivr.net/npm/@expo-google-fonts/arimo@0.4.3/400Regular/Arimo_400Regular.ttf',
       policeGras: 'https://cdn.jsdelivr.net/npm/@expo-google-fonts/arimo@0.4.3/700Bold/Arimo_700Bold.ttf'
     };
+    // Empreintes des fichiers ci-dessus (identiques aux paquets npm de même version) : un fichier modifié est refusé
+    const FX_SRI = {
+      [FX_LIBS.pdflib]: 'sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI',
+      [FX_LIBS.fontkit]: 'sha384-2p6U+1mmqF10USehFeRiyG2ESG9FwIqN+jxULn5w9jjQIihSn9Pt13dVCn/Hawjn',
+      [FX_LIBS.police]: 'sha384-cHgouPgjXHKEOSNRjpHh2tXcVMH4UGugArbYamYqlxUvaiBJES9libLcLU0vUgZd',
+      [FX_LIBS.policeGras]: 'sha384-9a/9rCESWKmmcbyjNR5cnpoBLSgs/ZvzKmsJlucmNCWOEA0gBCA9vNTDienWervG'
+    };
     // Profil de couleurs sRGB (exigé par la norme PDF/A)
     const SRGB_ICC_B64 = 'AAACTGxjbXMEQAAAbW50clJHQiBYWVogB+oACgASAAoABQAfYWNzcEFQUEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1sY21zAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALZGVzYwAAAQgAAAA2Y3BydAAAAUAAAABMd3RwdAAAAYwAAAAUY2hhZAAAAaAAAAAsclhZWgAAAcwAAAAUYlhZWgAAAeAAAAAUZ1hZWgAAAfQAAAAUclRSQwAAAggAAAAgZ1RSQwAAAggAAAAgYlRSQwAAAggAAAAgY2hybQAAAigAAAAkbWx1YwAAAAAAAAABAAAADGVuVVMAAAAaAAAAHABzAFIARwBCACAAYgB1AGkAbAB0AC0AaQBuAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAADAAAAAcAE4AbwAgAGMAbwBwAHkAcgBpAGcAaAB0ACwAIAB1AHMAZQAgAGYAcgBlAGUAbAB5WFlaIAAAAAAAAPbWAAEAAAAA0y1zZjMyAAAAAAABDEIAAAXe///zJQAAB5MAAP2Q///7of///aIAAAPcAADAblhZWiAAAAAAAABvoAAAOPUAAAOQWFlaIAAAAAAAACSfAAAPhAAAtsNYWVogAAAAAAAAYpcAALeHAAAY2XBhcmEAAAAAAAMAAAACZmYAAPKnAAANWQAAE9AAAApbY2hybQAAAAAAAwAAAACj1wAAVHsAAEzNAACZmgAAJmYAAA9c';
     const TAUX_TVA_FR = [20, 10, 5.5, 2.1];
 
     const chargerScript = (url) => new Promise((ok, ko) => {
       if (document.querySelector(`script[src="${url}"]`)) return ok();
-      const s = document.createElement('script'); s.src = url; s.onload = ok; s.onerror = () => ko(new Error('Chargement impossible : ' + url));
+      const s = document.createElement('script'); s.src = url; s.integrity = FX_SRI[url]; s.crossOrigin = 'anonymous'; s.onload = ok; s.onerror = () => ko(new Error('Chargement impossible : ' + url));
       document.head.appendChild(s);
     });
 
@@ -790,7 +809,7 @@ ${t.lignes.map((l, i) => `    <ram:IncludedSupplyChainTradeLineItem>
       await chargerScript(FX_LIBS.pdflib);
       await chargerScript(FX_LIBS.fontkit);
       const { PDFDocument, rgb, PDFName, PDFHexString, PDFString, AFRelationship } = window.PDFLib;
-      const [ttf, ttfB] = await Promise.all([FX_LIBS.police, FX_LIBS.policeGras].map(u => fetch(u).then(r => { if (!r.ok) throw new Error('Police indisponible'); return r.arrayBuffer(); })));
+      const [ttf, ttfB] = await Promise.all([FX_LIBS.police, FX_LIBS.policeGras].map(u => fetch(u, { integrity: FX_SRI[u] }).then(r => { if (!r.ok) throw new Error('Police indisponible'); return r.arrayBuffer(); })));
 
       const e = vendeurDe(f, data);
       const md = modeleFacture(f, data);
