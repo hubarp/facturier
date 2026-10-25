@@ -153,7 +153,11 @@ class ErreurAPI(Exception):
 
 
 def requete(methode, url, corps=None, entetes=None, timeout=60):
-    req = urllib.request.Request(url, data=corps, method=methode, headers=entetes or {})
+    entetes = dict(entetes or {})
+    auth = entetes.pop("Authorization", None)
+    req = urllib.request.Request(url, data=corps, method=methode, headers=entetes)
+    if auth:
+        req.add_unredirected_header("Authorization", auth)   # jamais renvoyé vers l'adresse d'une redirection
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.headers.get("Content-Type", ""), r.read()
@@ -1308,7 +1312,8 @@ class Gestionnaire(BaseHTTPRequestHandler):
             code, ct, brut = SPDP.appel("GET", f"invoices/{ident}/download")
         if code >= 400:
             raise ErreurAPI(code, decode(ct, brut))
-        type_c = "application/pdf" if brut.startswith(b"%PDF") else (ct or "application/octet-stream")
+        # Jamais le type annoncé par l'expéditeur : un XML/HTML/SVG reçu s'affiche comme du texte, sans rien exécuter
+        type_c = "application/pdf" if brut.startswith(b"%PDF") else "text/plain; charset=utf-8"
         ext = "pdf" if type_c == "application/pdf" else "xml"
         return self.envoyer(200, brut, type_c, {"Content-Disposition": f'inline; filename="facture_recue_{ident}.{ext}"'})
 
