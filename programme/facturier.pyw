@@ -8,6 +8,8 @@ Python 3.9 ou plus récent, sans module supplémentaire. Lancé par le raccourci
 (créé par « Installer le Facturier.bat »). Reste actif, invisible, jusqu'à la fermeture de la session Windows.
 """
 import hashlib
+import hmac
+import http.client
 import io
 import json
 import os
@@ -48,7 +50,18 @@ MANIFESTE_URL = os.environ.get("FACTURIER_MANIFESTE", f"https://raw.githubuserco
 URL_AUTORISEE = os.environ.get("FACTURIER_URL_MAJ", f"https://raw.githubusercontent.com/{DEPOT}/main/versions/")
 # Clé publique de signature : seule une version signée par la clé privée d'Antoine peut être installée
 CLE_PUBLIQUE = bytes.fromhex(os.environ.get("FACTURIER_CLE_PUBLIQUE", "f7365461d6fafc0ac4e88533bd8cd2c4680806422f919256f058c9423f627f53"))
-JETON = secrets.token_urlsafe(24)  # change à chaque lancement ; seule la page servie ici le connaît
+SESSION_HERITEE = bool(os.environ.get("FACTURIER_SESSION"))
+JETON = os.environ.pop("FACTURIER_SESSION", "") or secrets.token_urlsafe(24)  # gardé lors d'une mise à jour
+PREUVE = secrets.token_urlsafe(24)  # prouve l'identité du serveur ; contrairement à ARRET, jamais envoyée sur le réseau
+CODES = {}   # codes d'ouverture à usage unique (60 s) : seule la fenêtre ouverte par le programme reçoit le cookie
+SANS_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 127.0.0.1 : jamais par un proxy
+PAGE_ICONE = "<!doctype html><meta charset=utf-8><title>Facturier</title><p style='font:16px sans-serif;margin:3em'>Ouvrez le Facturier par son icône.</p>"
+
+
+def nouveau_code():
+    code = secrets.token_urlsafe(24)
+    CODES[code] = time.time() + 60
+    return code
 HOTES = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
 ORIGINES = {f"http://{h}" for h in HOTES}
 STATUTS_ECHEC = {"fr:213", "api:invalid", "api:rejected", "fr:501"}
@@ -636,7 +649,8 @@ def redemarrer():
     """Lance la nouvelle version, qui arrête celle-ci (même mécanisme qu'à l'ouverture)."""
     def lancer():
         options = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
-        subprocess.Popen([sys.executable, str(ICI / "facturier.pyw"), "--sans-navigateur"], cwd=str(ICI), close_fds=True, **options)
+        env = dict(os.environ, FACTURIER_SESSION=JETON)
+        subprocess.Popen([sys.executable, "-I", str(ICI / "facturier.pyw"), "--sans-navigateur"], cwd=str(ICI), close_fds=True, env=env, **options)
     threading.Timer(0.5, lancer).start()
 
 
@@ -1160,6 +1174,7 @@ class Serveur(ThreadingHTTPServer):
     """À l'arrêt (mise à jour, retour arrière), les requêtes en cours — un enregistrement — se terminent avant la sortie."""
     daemon_threads = False
     block_on_close = True
+    allow_reuse_address = sys.platform != "win32"   # Windows : SO_REUSEADDR = port partageable (détournement)
 
 
 _VERROU_FICHIER = None
@@ -1238,11 +1253,26 @@ class Gestionnaire(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def cookie_ok(self):
+        import http.cookies
+        try:
+            c = http.cookies.SimpleCookie(self.headers.get("Cookie", "")).get("facturier")
+        except http.cookies.CookieError:
+            return False
+        return bool(c) and secrets.compare_digest(c.value, JETON)
+
     def traiter(self, methode):
         u = urllib.parse.urlparse(self.path)
         api = u.path.startswith("/api/")
         if not self.autorise(api):
             return self.envoyer(403, {"erreur": "Accès refusé"})
+        if methode == "GET" and u.path == "/ouvrir":
+            code = urllib.parse.parse_qs(u.query).get("code", [""])[0]
+            if CODES.pop(code, 0) > time.time():
+                return self.envoyer(303, b"", "text/plain", {"Location": "/", "Set-Cookie": f"facturier={JETON}; HttpOnly; SameSite=Strict; Path=/"})
+            return self.envoyer(403, PAGE_ICONE, "text/html; charset=utf-8")
+        if (u.path in ("/", "/index.html") or api) and not self.cookie_ok():
+            return self.envoyer(403, PAGE_ICONE if not api else {"erreur": "Accès refusé"}, "text/html; charset=utf-8" if not api else "application/json; charset=utf-8")
         if methode == "GET" and u.path in ("/", "/index.html"):
             if self.headers.get("Sec-Fetch-Site", "") == "cross-site" or self.headers.get("Sec-Fetch-Dest", "") in ("iframe", "frame", "embed", "object"):
                 return self.envoyer(403, {"erreur": "Accès refusé"})
@@ -1250,10 +1280,16 @@ class Gestionnaire(BaseHTTPRequestHandler):
         if methode == "GET" and u.path == "/icone.png" and (ICI / "facturier.png").exists():
             return self.envoyer(200, (ICI / "facturier.png").read_bytes(), "image/png")
         if methode == "GET" and u.path == "/version":
-            return self.envoyer(200, {"app": "facturier", "version": VERSION})
-        if not api and u.path != "/arret":
+            defi = urllib.parse.parse_qs(u.query).get("defi", [""])[0]
+            preuve = hmac.new(PREUVE.encode(), defi.encode(), "sha256").hexdigest() if defi else ""
+            return self.envoyer(200, {"app": "facturier", "version": VERSION, "preuve": preuve})
+        if not api and u.path not in ("/arret", "/code"):
             return self.envoyer(404, {"erreur": "Introuvable"})
         corps = self.rfile.read(int(self.headers.get("Content-Length") or 0)) if methode in ("POST", "PUT") else b""
+        if u.path == "/code" and methode == "POST":
+            if secrets.compare_digest(self.headers.get("X-Arret", ""), ARRET):
+                return self.envoyer(200, {"code": nouveau_code()})
+            return self.envoyer(403, {"erreur": "Accès refusé"})
         if u.path == "/arret" and methode == "POST":
             # Arrêt demandé par une version plus récente du programme (clé lue dans le dossier des données)
             if secrets.compare_digest(self.headers.get("X-Arret", ""), ARRET):
@@ -1343,14 +1379,26 @@ def message(texte):
     print(texte)
 
 
-def version_active():
-    """Version du programme déjà lancé sur ce PC, ou None."""
+def cle_active(quoi="cle"):
     try:
-        with urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{PORT}/version", headers={"Host": f"127.0.0.1:{PORT}"}), timeout=2) as r:
+        return json.loads(FICHIER_ARRET.read_text(encoding="utf-8"))[quoi]
+    except (OSError, ValueError, KeyError):
+        return ""
+
+
+def version_active():
+    """Version du programme déjà lancé sur ce PC, ou None ; « ? » si ce n'est pas le nôtre."""
+    try:
+        defi = secrets.token_hex(16)
+        with SANS_PROXY.open(urllib.request.Request(f"http://127.0.0.1:{PORT}/version?defi={defi}", headers={"Host": f"127.0.0.1:{PORT}"}), timeout=2) as r:
             d = json.loads(r.read())
-            return d.get("version") if d.get("app") == "facturier" else "?"
-    except urllib.error.HTTPError:
-        return "?"
+            cle = cle_active("preuve")
+            # Ancienne version (sans preuve) acceptée seulement pour pouvoir l'arrêter ; jamais pour y ouvrir la fenêtre
+            if d.get("app") == "facturier" and cle and hmac.compare_digest(str(d.get("preuve", "")), hmac.new(cle.encode(), defi.encode(), "sha256").hexdigest()):
+                return d.get("version")
+            return "?"
+    except (urllib.error.HTTPError, http.client.HTTPException):
+        return "?"     # port occupé par autre chose (même non HTTP)
     except (OSError, ValueError):
         return None
 
@@ -1359,7 +1407,7 @@ def arreter_ancien():
     try:
         cle = json.loads(FICHIER_ARRET.read_text(encoding="utf-8"))["cle"]
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}/arret", data=b"", method="POST", headers={"X-Arret": cle, "Host": f"127.0.0.1:{PORT}"})
-        urllib.request.urlopen(req, timeout=3).read()
+        SANS_PROXY.open(req, timeout=3).read()
     except (OSError, ValueError, KeyError):
         return False
     for _ in range(30):
@@ -1367,6 +1415,15 @@ def arreter_ancien():
             return True
         time.sleep(0.2)
     return False
+
+
+def code_distant():
+    """Code d'ouverture demandé au programme déjà lancé (clé lue dans le dossier des données)."""
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/code", data=b"", method="POST", headers={"X-Arret": cle_active(), "Host": f"127.0.0.1:{PORT}"})
+        return json.loads(SANS_PROXY.open(req, timeout=3).read())["code"]
+    except (OSError, ValueError, KeyError):
+        return ""
 
 
 def navigateur():
@@ -1391,12 +1448,12 @@ def ouvrir_fenetre(adresse):
 
 
 def main():
-    adresse = f"http://localhost:{PORT}/"
-    fenetre = "--sans-navigateur" not in sys.argv
+    adresse = f"http://127.0.0.1:{PORT}/"   # jamais « localhost » : ::1 est essayé en premier et peut être occupé par un autre
+    fenetre = "--sans-navigateur" not in sys.argv or not SESSION_HERITEE   # relancé par une version sans cookie : nouvelle fenêtre
     active = version_active()
     if active == VERSION:
         if fenetre:
-            ouvrir_fenetre(adresse)
+            ouvrir_fenetre(adresse + "ouvrir?code=" + code_distant())
         return
     if active is not None and not arreter_ancien():
         message("Une ancienne version du Facturier, ou un autre programme, occupe déjà la place.\n"
@@ -1407,16 +1464,20 @@ def main():
         return
     # Un seul programme à la fois sur ces données (verrou système, libéré automatiquement à la fin du programme)
     if not prendre_verrou():
-        if version_active() and fenetre:
-            ouvrir_fenetre(adresse)
+        if version_active() not in (None, "?") and fenetre:
+            ouvrir_fenetre(adresse + "ouvrir?code=" + code_distant())
         elif not version_active():
             message("Le Facturier est déjà en cours de démarrage ou d'arrêt : patientez quelques secondes puis rouvrez-le.")
         return
-    try:
-        serveur = Serveur(("127.0.0.1", PORT), Gestionnaire)  # uniquement ce PC, jamais le réseau
-    except OSError as e:
-        message(f"Le Facturier ne peut pas démarrer : {e}")
-        return
+    for essai in range(10):
+        try:
+            serveur = Serveur(("127.0.0.1", PORT), Gestionnaire)  # uniquement ce PC, jamais le réseau
+            break
+        except OSError as e:
+            if essai == 9:
+                message(f"Le Facturier ne peut pas démarrer : {e}")
+                return
+            time.sleep(0.5)
     DONNEES.mkdir(parents=True, exist_ok=True)
     erreur = appliquer_migrations()
     if erreur:
@@ -1424,11 +1485,11 @@ def main():
         message(erreur + "\n\nVos données n'ont pas été modifiées (copie de sécurité « avant_format » dans le dossier des sauvegardes).\n"
                 "Revenez à la version précédente (dossier « programme_precedent ») ou prévenez Antoine.")
         return
-    FICHIER_ARRET.write_text(json.dumps({"cle": ARRET, "version": VERSION}), encoding="utf-8")
+    FICHIER_ARRET.write_text(json.dumps({"cle": ARRET, "preuve": PREUVE, "version": VERSION}), encoding="utf-8")
     journal(f"Démarrage version {VERSION} ({page_facturier().name}, API {API})")
     print(f"Facturier actif à l'adresse {adresse}")
     if fenetre:
-        threading.Timer(0.5, lambda: ouvrir_fenetre(adresse)).start()
+        threading.Timer(0.5, lambda: ouvrir_fenetre(adresse + "ouvrir?code=" + nouveau_code())).start()
     try:
         serveur.serve_forever()
     except KeyboardInterrupt:
