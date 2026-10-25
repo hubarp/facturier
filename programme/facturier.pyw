@@ -748,8 +748,20 @@ def maj_ignoree():
         return ""
 
 
+def precedente_proposee():
+    """Version de « programme_precedent » qu'on peut proposer de restaurer, ou None. Jamais une version plus récente
+    écartée (celle qui n'a pas démarré, après un retour automatique, ou celle qu'on vient de quitter par un retour) :
+    « revenir » à elle n'aurait pas de sens ; si elle est encore publiée, le bandeau de mise à jour la propose."""
+    p = version_de(PRECEDENT)
+    if not p or not FORMAT_VERSION.fullmatch(p) or p == VERSION:
+        return None
+    if p == maj_ignoree() and num_version(p) > num_version(VERSION):
+        return None
+    return p
+
+
 def act_maj_etat(_q, _corps):
-    res = {"actuelle": VERSION, "precedente": version_de(PRECEDENT), "disponible": None}
+    res = {"actuelle": VERSION, "precedente": precedente_proposee(), "disponible": None}
     try:
         c = lire_manifeste()
         if num_version(c["version"]) > num_version(VERSION):
@@ -1081,8 +1093,8 @@ def act_maj_installer(_q, _corps):
 
 @_une_seule_maj
 def act_maj_retour(_q, _corps):
-    precedente = version_de(PRECEDENT)
-    if not precedente or not FORMAT_VERSION.fullmatch(precedente):
+    precedente = precedente_proposee()
+    if not precedente:
         raise ErreurAPI(400, "Aucune version précédente à restaurer")
     sauvegarder_donnees(f"avant_retour_{VERSION}_vers_{precedente}")
     retour = fichiers_programme(PRECEDENT)
