@@ -1096,20 +1096,20 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const nomSauv = (d.entreprise && d.entreprise.raisonSociale) || 'sans nom';
       const nomActuel = data.entreprise.raisonSociale || 'l\'entreprise ouverte';
       if (data.factures.length && !confirm(`Remplacer les données de ${nomActuel} (${data.factures.length} factures, dernière ${dernier(data.factures)}) par celles de la sauvegarde « ${nomSauv} » (${d.factures.length} factures, dernière ${dernier(d.factures)}) ?\n\nUne copie de sécurité est faite avant. Les factures actuelles absentes de la sauvegarde sont conservées et les factures déjà déposées gardent leur version actuelle. Les fiches clients existantes ne sont pas modifiées.`)) return;
-      // Coordonnées bancaires ou identité différentes : avertissement explicite (fraude au changement d'IBAN par fichier reçu)
-      const norm = (v) => String(v || '').replace(/\s/g, '').toUpperCase();
-      const ea = data.entreprise || {}, eb = d.entreprise || {};
-      const ecarts = [['IBAN', 'iban'], ['BIC', 'bic'], ['RIB', 'rib'], ['SIRET', 'siret'], ['Raison sociale', 'raisonSociale']]
-        .filter(([, k]) => norm(ea[k]) && norm(ea[k]) !== norm(eb[k])).map(([lib, k]) => `${lib} : ${ea[k]} → ${eb[k] || '(vide)'}`);
-      const ibans = (x) => new Set([x.entreprise || {}, ...[...(x.factures || []), ...(x.facturesSupprimes || [])].map(f => f && f.vendeur).filter(Boolean)].map(v => norm(v.iban)).filter(Boolean));
-      const connus = ibans(data);
-      [...ibans(d)].filter(i => !connus.has(i) && i !== norm(eb.iban)).forEach(i => ecarts.push(`IBAN inconnu dans des factures : ${i}`));
-      if (ecarts.length && !confirm(`ATTENTION : cette sauvegarde change les coordonnées de l'entreprise :\n\n${ecarts.join('\n')}\n\nN'importez jamais un fichier reçu par courriel ou d'une autre personne. Continuer seulement si vous avez vous-même fait cette sauvegarde.`)) return;
       if (!RELAIS) { updateData(d); showToast('Données importées'); return; }
+      // Coordonnées différentes (IBAN, BIC, RIB, SIRET, raison sociale, IBAN inconnus) : le programme local applique la règle
+      // et renvoie la liste des écarts (428) ; elle est affichée ici, et l'import n'est refait qu'après confirmation
+      const envoyer = (accepte) => appelRelais(`/api/importer${accepte ? '?coordonnees=acceptees' : ''}`, { methode: 'POST', type: 'application/json', corps: JSON.stringify(d) });
       try {
         await ECRITURE.maintenant();
         ECRITURE.bloque = true;
-        await appelRelais(`/api/importer${ecarts.length ? '?coordonnees=acceptees' : ''}`, { methode: 'POST', type: 'application/json', corps: JSON.stringify(d) });
+        try { await envoyer(false); }
+        catch (e) {
+          if (e.status !== 428) throw e;
+          const ecarts = (e.detail && e.detail.ecarts) || [];
+          if (!confirm(`ATTENTION : cette sauvegarde change les coordonnées de l'entreprise :\n\n${ecarts.join('\n')}\n\nN'importez jamais un fichier reçu par courriel ou d'une autre personne. Continuer seulement si vous avez vous-même fait cette sauvegarde.`)) { ECRITURE.bloque = false; return; }
+          await envoyer(true);
+        }
         location.reload();
       } catch (e) { ECRITURE.bloque = false; showToast(`Import refusé : ${e.message}`); }
     };
@@ -1126,7 +1126,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       catch { throw new Error('Le Facturier ne répond plus : fermez cette fenêtre et rouvrez-le par son icône'); }
       const ct = r.headers.get('content-type') || '';
       const res = ct.includes('json') ? await r.json() : await r.blob();
-      if (!r.ok) { const err = new Error((res && res.erreur) || `Erreur ${r.status}`); err.status = r.status; throw err; }
+      if (!r.ok) { const err = new Error((res && res.erreur) || `Erreur ${r.status}`); err.status = r.status; err.code = res && res.code; err.detail = res && res.detail; throw err; }
       return res;
     };
     // Rejet (technique) : facture réputée non émise, corrigée et redéposée sous le même numéro.

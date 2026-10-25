@@ -1477,6 +1477,24 @@ def probleme_sauvegarde(d):
     return None
 
 
+def ecarts_coordonnees(actuel, d):
+    """Seule règle des coordonnées à l'import (la fenêtre affiche cette liste et demande confirmation) : IBAN, BIC, RIB,
+    SIRET ou raison sociale renseignés ici et différents dans la sauvegarde, et IBAN de la sauvegarde (fiche ou factures)
+    inconnus de ce PC. Entreprise neuve ou vide (ni facture ni coordonnées : installation neuve, restauration d'une
+    Sauvegarde complète) : aucun contrôle, il n'y a rien à protéger."""
+    norm = lambda v: re.sub(r"\s", "", str(v or "")).upper()
+    ea, eb = ((actuel or {}).get("entreprise") or {}), (d.get("entreprise") or {})
+    factures = lambda x: [f for f in ((x or {}).get("factures") or []) + ((x or {}).get("facturesSupprimes") or []) if isinstance(f, dict)]
+    if not factures(actuel) and not any(norm(ea.get(k)) for k in ("iban", "bic", "rib", "siret")):
+        return []
+    ecarts = [f"{lib} : {ea.get(k)} → {eb.get(k) or '(vide)'}" for lib, k in (("IBAN", "iban"), ("BIC", "bic"), ("RIB", "rib"), ("SIRET", "siret"), ("Raison sociale", "raisonSociale"))
+              if norm(ea.get(k)) and norm(ea.get(k)) != norm(eb.get(k))]
+    ibans = lambda x, e: ({norm(e.get("iban"))} | {norm(f["vendeur"].get("iban")) for f in factures(x) if isinstance(f.get("vendeur"), dict)}) - {""}
+    deja = {norm(eb.get("iban"))} if norm(ea.get("iban")) else set()     # nouvel IBAN de la fiche : déjà dans la liste
+    ecarts += [f"IBAN inconnu de ce PC : {i}" for i in sorted(ibans(d, eb) - ibans(actuel, ea) - deja)]
+    return ecarts
+
+
 def act_importer(_q, corps):
     """Import d'une sauvegarde dans l'entreprise ouverte : copie de sécurité, contrôle d'identité, fiches clients
     seulement ajoutées (jamais de modification ni de corbeille des fiches existantes), factures réaffectées."""
@@ -1492,18 +1510,12 @@ def act_importer(_q, corps):
         siret = lambda x: re.sub(r"\D", "", str(((x or {}).get("entreprise") or {}).get("siret") or ""))[:9]
         if actuel and siret(actuel) and siret(d) and siret(actuel) != siret(d):
             raise ErreurAPI(400, "Cette sauvegarde est celle d'une autre entreprise (SIREN différent) : ouvrez la bonne entreprise avant d'importer")
-        # SIRET absent de la sauvegarde ou coordonnées bancaires différentes : seulement après l'avertissement de la fenêtre
-        banque = lambda x: [re.sub(r"\s", "", str(((x or {}).get("entreprise") or {}).get(k) or "")).upper() for k in ("iban", "bic", "rib")]
-        confirme = (_q.get("coordonnees") or [""])[0] == "acceptees"
-        # IBAN figés dans les factures (vendeur) : un IBAN inconnu de ce PC compte comme un changement
-        ibans = lambda x: {re.sub(r"\s", "", str(v.get("iban") or "")).upper() for v in [(x or {}).get("entreprise") or {}] +
-                           [f.get("vendeur") for f in ((x or {}).get("factures") or []) + ((x or {}).get("facturesSupprimes") or [])
-                            if isinstance(f, dict) and isinstance(f.get("vendeur"), dict)]} - {""}
-        inconnus = ibans(d) - ibans(actuel)
-        if actuel and not confirme and ((siret(actuel) and not siret(d)) or (any(banque(actuel)) and banque(actuel) != banque(d)) or inconnus):
-            raise ErreurAPI(400, "Cette sauvegarde change les coordonnées bancaires ou le SIRET de l'entreprise : import refusé")
-        if actuel and banque(actuel) != banque(d):
-            journal(f"Import : coordonnées bancaires changées (IBAN ...{banque(actuel)[0][-4:]} -> ...{banque(d)[0][-4:]}), confirmé dans la fenêtre")
+        # Coordonnées différentes : la fenêtre affiche la liste renvoyée ici et redemande avec coordonnees=acceptees
+        ecarts = ecarts_coordonnees(actuel, d)
+        if ecarts and (_q.get("coordonnees") or [""])[0] != "acceptees":
+            raise ErreurAPI(428, {"message": "Cette sauvegarde change les coordonnées de l'entreprise : confirmation nécessaire", "ecarts": ecarts})
+        if ecarts:
+            journal(f"Import : {len(ecarts)} coordonnée(s) changée(s) ({', '.join(e.split(' :')[0] for e in ecarts)}), confirmé dans la fenêtre")
         sauvegarder_donnees(f"avant_import_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=getattr(CTX, "entreprise", None) or "principale")
         gardees = conserver_factures(actuel, d)
         controler_factures(actuel, d)
@@ -1904,7 +1916,7 @@ class Gestionnaire(BaseHTTPRequestHandler):
         except ErreurAPI as e:
             msg = e.corps if isinstance(e.corps, str) else (e.corps.get("message") or e.corps.get("error") if isinstance(e.corps, dict) else None) or f"Super PDP a répondu HTTP {e.code}"
             journal(f"{methode} {u.path} : erreur {e.code} {str(msg)[:200]}")
-            return self.envoyer(502 if e.code >= 500 else (e.code if e.code in (403, 404, 409) else 400), {"erreur": msg, "code": e.code, "detail": e.corps if not isinstance(e.corps, str) else None})
+            return self.envoyer(502 if e.code >= 500 else (e.code if e.code in (403, 404, 409, 428) else 400), {"erreur": msg, "code": e.code, "detail": e.corps if not isinstance(e.corps, str) else None})
         except OSError as e:
             if u.path.startswith("/api/maj"):       # fichier local (disque, droits), pas Super PDP
                 journal(f"{methode} {u.path} : erreur de fichier {e!r}")
