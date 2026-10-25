@@ -1295,6 +1295,8 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
     # Plus grand code pris, tenu à jour. Il compte aussi les codes de la source : une fiche en conflit reçoit un code
     # après tous ceux de la source, au lieu de décaler en cascade toutes les fiches suivantes (C00001→C00002→…)
     codes_source = [_code(c.get("numero")) for c in list(src_actifs or []) + list(src_supprimes or []) if isinstance(c, dict) and c.get("numero")]
+    # … et les codes cités par ses factures (fiche disparue) : un nouveau code ne doit jamais tomber sur l'un d'eux
+    codes_source += [_code(f.get("clientId")) for f in (factures or []) if isinstance(f, dict) and f.get("clientId")]
     maxi = [max([_code(n) for n in pris] + codes_source + [0])]
     vus_src = set()
     for liste, a_la_corbeille in ((src_actifs or [], False), (src_supprimes or [], True)):
