@@ -1373,6 +1373,17 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (!texte || texte === derniereEcrite.current) return;
         try { await ecrireDonnees(texte); essaisEcriture.current = 0; }
         catch (e) {
+          if (e.code === 422) {
+            // Règle refusée par le programme local (numéro en double, facture déposée modifiée ou supprimée…) : un nouvel
+            // essai recevrait la même réponse. Pas de nouvel essai automatique : on l'explique une fois.
+            essaisEcriture.current = 0;
+            if (erreurEcriture.current !== 422) {
+              erreurEcriture.current = 422;
+              ECRITURE.alerte(`Enregistrement refusé : ${e.message}. Rien n'a été enregistré depuis cette modification : annulez-la, ou fermez et rouvrez la fenêtre pour revenir au dernier état enregistré.`);
+              alert(`Enregistrement refusé : ${e.message}\n\nRien n'a été enregistré depuis cette modification. Annulez-la, ou fermez et rouvrez la fenêtre pour revenir au dernier état enregistré.`);
+            }
+            return;
+          }
           if (!erreurEcriture.current) { erreurEcriture.current = true; showToast(`Enregistrement impossible : ${e.message}. Nouvel essai automatique…`); }
           essaisEcriture.current += 1;
           clearTimeout(minuterieEcriture.current);
