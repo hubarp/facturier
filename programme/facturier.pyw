@@ -161,9 +161,11 @@ def lire_identifiants():
 
 def ecrire_identifiants(cid, sec):
     dossier().mkdir(parents=True, exist_ok=True)
-    fichier_ids().write_text(
+    tmp = fichier_ids().with_suffix(".tmp")          # jamais de fichier à moitié écrit (coupure pendant l'écriture)
+    tmp.write_text(
         "# Identifiants de l'application Super PDP (ne pas partager ce fichier)\n"
         f"SUPER_PDP_CLIENT_ID={cid}\nSUPER_PDP_CLIENT_SECRET={sec}\n", encoding="utf-8")
+    os.replace(tmp, fichier_ids())
 
 
 class ErreurAPI(Exception):
@@ -625,6 +627,15 @@ def act_maj_etat(_q, _corps):
     return res
 
 
+def copier_sur(source, cible):
+    """Copie complète ou rien : une copie interrompue (coupure, disque plein) ne laisse jamais un fichier tronqué
+    sous le nom de la sauvegarde (qui, avec ecraser=False, ne serait plus jamais refaite)."""
+    cible.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cible.with_suffix(".tmp")
+    shutil.copy2(source, tmp)
+    os.replace(tmp, cible)
+
+
 def sauvegarder_donnees(nom, ecraser=True, seulement=None):
     """Copie des données de chaque entreprise et du fichier client commun (avant une mise à jour, une
     transformation, un import). ecraser=False : une copie déjà faite sous ce nom n'est jamais remplacée."""
@@ -634,16 +645,13 @@ def sauvegarder_donnees(nom, ecraser=True, seulement=None):
         f = fichier_donnees(e["id"])
         cible = dossier_sauvegardes(e["id"]) / f"{nom}.json"
         if f.exists() and (ecraser or not cible.exists()):
-            dossier_sauvegardes(e["id"]).mkdir(parents=True, exist_ok=True)
-            shutil.copy2(f, cible)
+            copier_sur(f, cible)
     cible_ent = DONNEES / "sauvegardes" / f"entreprises_{nom}.json"
     if FICHIER_ENTREPRISES.exists() and (ecraser or not cible_ent.exists()):
-        cible_ent.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(FICHIER_ENTREPRISES, cible_ent)
+        copier_sur(FICHIER_ENTREPRISES, cible_ent)
     cible = DONNEES / "sauvegardes" / f"clients_{nom}.json"
     if FICHIER_CLIENTS.exists() and (ecraser or not cible.exists()):
-        cible.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(FICHIER_CLIENTS, cible)
+        copier_sur(FICHIER_CLIENTS, cible)
 
 
 def fichiers_programme(dossier):
@@ -660,11 +668,20 @@ def ecrire_programme(fichiers):
 def installer_programme(fichiers):
     """Remplace les fichiers du programme ; l'ancienne version part dans « programme_precedent »."""
     ancien = fichiers_programme(ICI)
-    if PRECEDENT.exists():
-        shutil.rmtree(PRECEDENT)
-    PRECEDENT.mkdir()
+    # La copie complète est faite à côté, puis remplace l'ancienne d'un coup : une coupure ne laisse jamais un
+    # « programme_precedent » vide ou incomplet
+    neuf = PRECEDENT.with_name(PRECEDENT.name + "_nouveau")
+    vieux = PRECEDENT.with_name(PRECEDENT.name + "_ancien")
+    for d in (neuf, vieux):
+        if d.exists():
+            shutil.rmtree(d)
+    neuf.mkdir()
     for nom, contenu in ancien.items():
-        (PRECEDENT / nom).write_bytes(contenu)
+        (neuf / nom).write_bytes(contenu)
+    if PRECEDENT.exists():
+        os.replace(PRECEDENT, vieux)
+    os.replace(neuf, PRECEDENT)
+    shutil.rmtree(vieux, ignore_errors=True)
     try:
         ecrire_programme(fichiers)
     except OSError:
@@ -672,13 +689,57 @@ def installer_programme(fichiers):
         raise
 
 
-def redemarrer():
-    """Lance la nouvelle version, qui arrête celle-ci (même mécanisme qu'à l'ouverture)."""
-    def lancer():
-        options = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
-        env = dict(os.environ, FACTURIER_SESSION=JETON)
-        subprocess.Popen([sys.executable, "-I", str(ICI / "facturier.pyw"), "--sans-navigateur"], cwd=str(ICI), close_fds=True, env=env, **options)
-    threading.Timer(0.5, lancer).start()
+RELEVE = threading.Event()   # la version suivante a demandé l'arrêt de celle-ci (elle a démarré)
+
+
+def lancer_programme(fenetre=False):
+    """Seule façon de (re)lancer le programme depuis lui-même (mise à jour, retour, retour automatique) : processus
+    détaché, « python -I » (aucun module pris dans le dossier « programme ») et le jeton de la fenêtre déjà ouverte
+    (FACTURIER_SESSION), qui continue donc de fonctionner après le redémarrage."""
+    options = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
+    env = dict(os.environ, FACTURIER_SESSION=JETON)
+    subprocess.Popen([sys.executable, "-I", str(ICI / "facturier.pyw")] + ([] if fenetre else ["--sans-navigateur"]),
+                     cwd=str(ICI), close_fds=True, env=env, **options)
+
+
+def redemarrer(delai=60):
+    """Lance la nouvelle version, qui arrête celle-ci (même mécanisme qu'à l'ouverture). Si elle ne l'a pas fait
+    au bout de `delai` secondes (plantage dès son lancement), les fichiers de cette version-ci sont remis en place
+    et elle continue de servir : le Facturier reste utilisable."""
+    def surveiller():
+        if RELEVE.wait(delai):
+            return
+        try:
+            installer_programme(fichiers_programme(PRECEDENT))   # « programme_precedent » = cette version-ci
+            (DONNEES / "maj_ignoree.txt").write_text(version_de(PRECEDENT) or "", encoding="utf-8")
+            journal(f"La nouvelle version n'a pas démarré en {delai} s : retour automatique à la version {VERSION}")
+        except OSError as e:
+            journal(f"La nouvelle version n'a pas démarré ; retour automatique impossible : {e!r}")
+    threading.Timer(0.5, lancer_programme).start()
+    threading.Thread(target=surveiller, daemon=True).start()
+
+
+FICHIER_DEMARRAGE = DONNEES / "demarrage_reussi.txt"    # dernière version qui a démarré jusqu'au bout sur ce PC
+
+
+def retour_automatique(raison):
+    """Premier démarrage d'une version qui échoue : retour à la version précédente si c'est elle qui a démarré
+    la dernière fois. Renvoie la version restaurée, ou None (rien n'est fait)."""
+    try:
+        reussie = FICHIER_DEMARRAGE.read_text(encoding="utf-8").strip()
+    except OSError:
+        reussie = ""
+    precedente = version_de(PRECEDENT)
+    if reussie == VERSION or not precedente or precedente == VERSION or (reussie and reussie != precedente) or "ATTENTION" in raison:
+        return None                  # déjà démarrée ici, rien à restaurer, ou données à vérifier avant tout
+    try:
+        installer_programme(fichiers_programme(PRECEDENT))
+        (DONNEES / "maj_ignoree.txt").write_text(VERSION, encoding="utf-8")
+    except OSError as e:
+        journal(f"Retour automatique impossible : {e!r}")
+        return None
+    journal(f"Version {VERSION} : échec au premier démarrage ({raison}) ; retour automatique à la version {precedente}")
+    return precedente
 
 
 def act_maj_installer(_q, _corps):
@@ -812,12 +873,22 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
     actifs, supprimes = communs["clients"], communs["clientsSupprimes"]
     # Une fiche sans uid n'est comparée qu'aux fiches présentes avant cet appel (jamais à une autre fiche de la même source)
     actifs_avant, supprimes_avant = list(actifs), list(supprimes)
+    # Index par nom (une fiche sans uid n'est reconnue que si le nom est le même) et présence par identité : la fusion
+    # reste rapide même avec des milliers de fiches
+    def par_nom(liste):
+        idx = {}
+        for x in liste:
+            idx.setdefault(norm_nom(x.get("nom")), []).append(x)
+        return idx
+    idx_actifs, idx_supprimes = par_nom(actifs_avant), par_nom(supprimes_avant)
+    presents = {id(x) for x in actifs}, {id(x) for x in supprimes}
     base = communs.get("_base") or {}            # uid -> empreinte de la fiche telle que la source l'avait reçue
     tous = lambda: actifs + supprimes
     par_uid = {c.get("uid"): c for c in tous() if c.get("uid")}
     pris = {str(c.get("numero")) for c in tous()}
     renum = []                                   # (ancien code, fiche source, nouveau code)
     rapport = {"ajoutes": 0, "modifies": 0, "renumerotes": []}
+    maxi = [max([_code(n) for n in pris] + [0])]  # plus grand code pris, tenu à jour (même résultat qu'un max à chaque fois)
     vus_src = set()
     for liste, a_la_corbeille in ((src_actifs or [], False), (src_supprimes or [], True)):
         for c in liste:
@@ -827,9 +898,10 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
             ancien = str(c["numero"])
             cible = par_uid.get(c.get("uid")) if c.get("uid") else None
             if cible is None and not c.get("uid"):
-                cible = next((x for x in actifs_avant if x in actifs and meme_client_sans_uid(c, x)), None)
-                if cible is None and a_la_corbeille:
-                    cible = next((x for x in supprimes_avant if x in supprimes and meme_client_sans_uid(c, x)), None)
+                nom_c = norm_nom(c.get("nom"))
+                cible = next((x for x in idx_actifs.get(nom_c, []) if id(x) in presents[0] and meme_client_sans_uid(c, x)), None) if nom_c else None
+                if cible is None and a_la_corbeille and nom_c:
+                    cible = next((x for x in idx_supprimes.get(nom_c, []) if id(x) in presents[1] and meme_client_sans_uid(c, x)), None)
             if cible is not None:
                 if str(cible["numero"]) != ancien:
                     renum.append((ancien, c, str(cible["numero"])))
@@ -837,13 +909,16 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
                     inchange = base.get(cible.get("uid")) == empreinte({**c, "uid": cible.get("uid"), "numero": cible["numero"]})
                     if not inchange and empreinte({**c, "uid": cible.get("uid"), "numero": cible["numero"]}) != empreinte(cible):
                         nouvelle = {**c, "uid": cible["uid"], "numero": cible["numero"]}
-                        dans_supprimes = cible in supprimes
+                        dans_supprimes = id(cible) in presents[1]
                         if dans_supprimes == a_la_corbeille:          # même liste : remplacée sur place (ordre stable)
                             liste_c = supprimes if dans_supprimes else actifs
-                            liste_c[liste_c.index(cible)] = nouvelle
+                            liste_c[next(i for i, x in enumerate(liste_c) if x is cible)] = nouvelle
                         else:
-                            (supprimes if dans_supprimes else actifs).remove(cible)
+                            depart = supprimes if dans_supprimes else actifs
+                            del depart[next(i for i, x in enumerate(depart) if x is cible)]
                             (supprimes if a_la_corbeille else actifs).append(nouvelle)
+                        presents[1 if dans_supprimes else 0].discard(id(cible))
+                        presents[1 if a_la_corbeille else 0].add(id(nouvelle))
                         par_uid[cible["uid"]] = nouvelle
                         rapport["modifies"] += 1
                 vus_src.add(cible.get("uid"))
@@ -851,14 +926,16 @@ def integrer_clients(communs, src_actifs, src_supprimes, factures, mode):
             # Fiche inconnue : ajoutée, avec un nouveau code si le sien est déjà pris
             c.setdefault("uid", secrets.token_hex(8))
             if ancien in pris or c["uid"] in par_uid:
-                nouveau = f"C{max([_code(n) for n in pris] + [0]) + 1:05d}"
+                nouveau = f"C{maxi[0] + 1:05d}"
                 renum.append((ancien, c, nouveau))
                 rapport["renumerotes"].append(f"{ancien}→{nouveau} ({c.get('nom', '')})")
                 c["numero"] = nouveau
             if c["uid"] in par_uid:
                 c["uid"] = secrets.token_hex(8)
             pris.add(str(c["numero"]))
+            maxi[0] = max(maxi[0], _code(c["numero"]))
             (supprimes if a_la_corbeille else actifs).append(c)
+            presents[1 if a_la_corbeille else 0].add(id(c))
             par_uid[c["uid"]] = c
             vus_src.add(c["uid"])
             rapport["ajoutes"] += 1
@@ -907,6 +984,16 @@ def ecrire_communs(communs, ident=None, donnees=None):
     ecrire_json(FICHIER_CLIENTS, communs)
 
 
+def ecrire_entreprise(fichier, d, communs, ident):
+    """Un seul ordre d'écriture pour un fichier d'entreprise et le fichier client commun (enregistrement, import,
+    réintégration au démarrage) : clients.json d'abord, sans changer l'empreinte de l'entreprise, puis facturier.json,
+    puis l'empreinte. Si facturier.json ne peut pas être écrit (antivirus, OneDrive), sa révision n'a pas bougé, la
+    page réessaie, et aucune fiche n'est perdue ni son code redonné à un autre client."""
+    ecrire_communs(communs)
+    ecrire_json(fichier, d)
+    ecrire_communs(communs, ident, d)
+
+
 def usage_clients():
     """Pour chaque code client, les entreprises où il a au moins une facture (y compris à la corbeille)."""
     usage = {}
@@ -931,12 +1018,27 @@ def verifier_format():
         raise ErreurAPI(503, "Données pas encore au nouveau format : fermez la fenêtre et rouvrez le Facturier")
 
 
+# Fiches clients telles qu'une fenêtre les a reçues, par (entreprise, révision) : à l'enregistrement suivant, seules
+# les fiches que la fenêtre a réellement changées depuis l'emportent (une fiche modifiée entre-temps depuis une autre
+# entreprise n'est pas écrasée par la copie périmée de cette fenêtre). En mémoire : une page ne survit pas au
+# redémarrage du programme (le jeton change).
+BASES_VUES = {}
+
+
+def retenir_base(ident, revision, communs):
+    BASES_VUES[(ident, revision)] = {c["uid"]: empreinte(c) for c in communs["clients"] + communs["clientsSupprimes"] if c.get("uid")}
+    for cle in [k for k in BASES_VUES if k[0] == ident and k[1] < revision - 20]:
+        del BASES_VUES[cle]
+
+
 def act_lire_donnees(_q, _corps):
     verifier_format()
+    ident = getattr(CTX, "entreprise", None) or "principale"
     with VERROU_DONNEES:
         d = lire_json_strict(fichier_donnees(), "des données") if fichier_donnees().exists() else None
         communs = lire_communs()
-    revision = int((d or {}).get("_revision") or 0)
+        revision = int((d or {}).get("_revision") or 0)
+        retenir_base(ident, revision, communs)
     if d is not None:
         d["clients"], d["clientsSupprimes"] = communs["clients"], communs["clientsSupprimes"]
         d.pop("_revision", None)
@@ -961,8 +1063,10 @@ def act_ecrire_donnees(_q, corps):
             raise ErreurAPI(409, "Les données ont été modifiées par une autre fenêtre du Facturier depuis leur ouverture ici")
         controler_factures(actuel, d)
         d["_revision"] = attendu + 1
-        res = _ecrire_donnees(d)
+        ident = getattr(CTX, "entreprise", None) or "principale"
+        res = _ecrire_donnees(d, base=BASES_VUES.get((ident, attendu)))
         res["revision"] = attendu + 1
+        retenir_base(ident, attendu + 1, res)
         return res
 
 
@@ -1027,30 +1131,55 @@ def sauvegarde_du_jour(fichier, dossier_sauv, prefixe):
     dossier_sauv.mkdir(parents=True, exist_ok=True)
     cible = dossier_sauv / f"{prefixe}_{datetime.now():%Y-%m-%d}.json"
     if not cible.exists():
-        cible.write_bytes(fichier.read_bytes())
-        for vieux in sorted(dossier_sauv.glob(f"{prefixe}_*.json"))[:-60]:
+        copier_sur(fichier, cible)                     # copie complète ou rien (coupure, disque plein)
+        # Seules les copies quotidiennes (prefixe_AAAA-MM-JJ.json) tournent ; les copies « avant_* » ne sont jamais supprimées ici
+        datees = [p for p in dossier_sauv.glob(f"{prefixe}_*.json") if re.fullmatch(re.escape(prefixe) + r"_\d{4}-\d{2}-\d{2}\.json", p.name)]
+        for vieux in sorted(datees)[:-60]:
             try:
                 vieux.unlink()
             except OSError:
                 pass
 
 
-def _ecrire_donnees(d, mode="source"):
+def _ecrire_donnees(d, mode="source", base=None):
     FICHIER_DONNEES = fichier_donnees()
     communs = lire_communs()
     ident = getattr(CTX, "entreprise", None) or "principale"
+    if mode == "source":
+        # À défaut de la base vue par la fenêtre, les fiches telles que cette entreprise les a enregistrées la dernière fois
+        communs["_base"] = base if base is not None else (communs["empreintes"].get(ident) or {}).get("fiches") or {}
     rapport = integrer_clients(communs, d.get("clients") or [], d.get("clientsSupprimes") or [],
                                (d.get("factures") or []) + (d.get("facturesSupprimes") or []), mode)
     sauvegarde_du_jour(FICHIER_DONNEES, dossier_sauvegardes(), "facturier")
     sauvegarde_du_jour(FICHIER_CLIENTS, DONNEES / "sauvegardes", "clients")
     d["clients"], d["clientsSupprimes"] = communs["clients"], communs["clientsSupprimes"]   # copie (retour arrière)
-    ecrire_json(FICHIER_DONNEES, d)
-    ecrire_communs(communs, ident, d)
+    ecrire_entreprise(FICHIER_DONNEES, d, communs, ident)
     if rapport["renumerotes"] or rapport["reaffectations"]:
         journal(f"Clients : {rapport}")
     # La page reprend la liste commune (fiches ajoutées ailleurs, codes renumérotés) et les factures réaffectées
     return {"ok": True, "clients": communs["clients"], "clientsSupprimes": communs["clientsSupprimes"],
             "reaffectations": rapport["reaffectations"]}
+
+
+def probleme_sauvegarde(d):
+    """Premier problème de structure d'une sauvegarde (types attendus par la page), ou None."""
+    if not isinstance(d.get("entreprise", {}), dict):
+        return "« entreprise » n'est pas une fiche"
+    for cle in ("factures", "facturesSupprimes", "clients", "clientsSupprimes", "produits", "produitsSupprimes"):
+        liste = d.get(cle, [])
+        if not isinstance(liste, list):
+            return f"« {cle} » n'est pas une liste"
+        for i, x in enumerate(liste):
+            if not isinstance(x, dict):
+                return f"{cle} n° {i + 1} n'est pas une fiche"
+            for champ in ("numero", "nom", "clientId", "statut", "ref"):
+                if champ in x and x[champ] is not None and not isinstance(x[champ], str):
+                    return f"{cle} n° {i + 1} : « {champ} » devrait être du texte"
+            if cle.startswith(("factures", "clients")) and not x.get("numero"):
+                return f"{cle} n° {i + 1} sans numéro"
+            if "lignes" in x and not isinstance(x["lignes"], (list, type(None))) or "client" in x and not isinstance(x["client"], (dict, type(None))):
+                return f"{cle} n° {i + 1} : lignes ou client mal formés"
+    return None
 
 
 def act_importer(_q, corps):
@@ -1059,12 +1188,27 @@ def act_importer(_q, corps):
     d = json.loads(corps or b"null")
     if not isinstance(d, dict) or not isinstance(d.get("factures"), list) or not isinstance(d.get("clients"), list):
         raise ErreurAPI(400, "Fichier de sauvegarde invalide : rien n'a été importé")
+    pb = probleme_sauvegarde(d)
+    if pb:
+        raise ErreurAPI(400, f"Fichier de sauvegarde invalide ({pb}) : rien n'a été importé")
     verifier_format()
     with VERROU_DONNEES:
         actuel = lire_json(fichier_donnees(), None)
         siret = lambda x: re.sub(r"\D", "", str(((x or {}).get("entreprise") or {}).get("siret") or ""))[:9]
         if actuel and siret(actuel) and siret(d) and siret(actuel) != siret(d):
             raise ErreurAPI(400, "Cette sauvegarde est celle d'une autre entreprise (SIREN différent) : ouvrez la bonne entreprise avant d'importer")
+        # SIRET absent de la sauvegarde ou coordonnées bancaires différentes : seulement après l'avertissement de la fenêtre
+        banque = lambda x: [re.sub(r"\s", "", str(((x or {}).get("entreprise") or {}).get(k) or "")).upper() for k in ("iban", "bic", "rib")]
+        confirme = (_q.get("coordonnees") or [""])[0] == "acceptees"
+        # IBAN figés dans les factures (vendeur) : un IBAN inconnu de ce PC compte comme un changement
+        ibans = lambda x: {re.sub(r"\s", "", str(v.get("iban") or "")).upper() for v in [(x or {}).get("entreprise") or {}] +
+                           [f.get("vendeur") for f in ((x or {}).get("factures") or []) + ((x or {}).get("facturesSupprimes") or [])
+                            if isinstance(f, dict) and isinstance(f.get("vendeur"), dict)]} - {""}
+        inconnus = ibans(d) - ibans(actuel)
+        if actuel and not confirme and ((siret(actuel) and not siret(d)) or (any(banque(actuel)) and banque(actuel) != banque(d)) or inconnus):
+            raise ErreurAPI(400, "Cette sauvegarde change les coordonnées bancaires ou le SIRET de l'entreprise : import refusé")
+        if actuel and banque(actuel) != banque(d):
+            journal(f"Import : coordonnées bancaires changées (IBAN ...{banque(actuel)[0][-4:]} -> ...{banque(d)[0][-4:]}), confirmé dans la fenêtre")
         sauvegarder_donnees(f"avant_import_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=getattr(CTX, "entreprise", None) or "principale")
         gardees = conserver_factures(actuel, d)
         controler_factures(actuel, d)
@@ -1079,10 +1223,44 @@ def act_importer(_q, corps):
 
 # ---------------------------------------------------------------- transformations des données (une par version de format)
 
+FICHIER_MIGRATION = DONNEES / ".transformation_en_cours.json"
+
+
+def restaurer_migration_interrompue():
+    """Remet chaque fichier d'entreprise dans son état d'avant une transformation interrompue, s'il est encore tel
+    que la transformation l'a écrit (jamais s'il a été modifié depuis). Renvoie les fichiers non remis en état."""
+    temoin = lire_json(FICHIER_MIGRATION, None)
+    if not isinstance(temoin, dict):
+        return []
+    non_remis = []
+    for x in temoin.get("fichiers") or []:
+        f = DONNEES / x["chemin"]
+        try:
+            actuel = hashlib.sha256(f.read_bytes()).hexdigest() if f.exists() else None
+            if actuel == x["ecrit"]:                       # encore tel que la transformation l'a écrit
+                tmp = f.with_suffix(".tmp")
+                tmp.write_text(x["origine"], encoding="utf-8")
+                os.replace(tmp, f)
+                journal(f"Transformation interrompue : {x['chemin']} remis dans son état d'origine")
+            elif actuel is not None and f.read_text(encoding="utf-8-sig") != x["origine"]:
+                non_remis.append(x["chemin"])               # modifié depuis par autre chose : on n'y touche pas
+        except OSError:
+            non_remis.append(x["chemin"])
+    if not non_remis:
+        try:
+            FICHIER_MIGRATION.unlink()
+        except OSError:
+            pass
+    return non_remis
+
+
 def migration_1_clients_communs():
     """Les fiches clients de toutes les entreprises passent dans un fichier commun (fiches de l'entreprise principale
     d'abord). Une fiche n'est fusionnée avec une autre que sur des critères sûrs ; sinon elle est ajoutée, renumérotée
     si son code est pris, et les factures de son entreprise suivent."""
+    non_remis = restaurer_migration_interrompue()        # transformation précédente interrompue (coupure de courant)
+    if non_remis:
+        raise RuntimeError(f"transformation précédente interrompue et fichier(s) modifié(s) depuis : {', '.join(non_remis)} ; ATTENTION, rien n'a été fait")
     communs = {"clients": [], "clientsSupprimes": [], "empreintes": {}}
     resume = []
     lus = []
@@ -1092,19 +1270,42 @@ def migration_1_clients_communs():
             continue
         d = lire_json(f, None)
         if not isinstance(d, dict):
-            raise RuntimeError(f"données illisibles pour l'entreprise {e['id']}")
+            # Un fichier abîmé ne bloque pas les autres entreprises : il reste tel quel (l'entreprise affichera
+            # « Données illisibles ») et sera réintégré au démarrage suivant s'il est restauré ou réimporté
+            journal(f"Données illisibles pour l'entreprise {e['id']} : laissées de côté, les autres entreprises sont transformées")
+            resume.append(f"{e['id']} : fichier illisible laissé de côté")
+            continue
         lus.append((e["id"], f, d))
     for ident, f, d in lus:
         factures = (d.get("factures") or []) + (d.get("facturesSupprimes") or [])
         r = integrer_clients(communs, d.get("clients") or [], d.get("clientsSupprimes") or [], factures, "ajout")
         if r["renumerotes"] or r["reaffectations"]:
             resume.append(f"{ident} : {len(r['renumerotes'])} fiche(s) renumérotée(s) {r['renumerotes']}, {len(r['reaffectations'])} facture(s) réaffectée(s)")
-    # Tout est prêt en mémoire : écriture des fichiers d'entreprise puis du fichier commun (écrit en dernier)
+    # Tout est prêt en mémoire : écriture des fichiers d'entreprise puis du fichier commun (écrit en dernier).
+    # Un témoin garde le contenu d'origine de chaque fichier : si l'écriture s'interrompt (erreur, coupure de courant),
+    # les fichiers déjà transformés sont remis à l'identique, ici ou au lancement suivant, et la transformation reprend
+    # de zéro (sinon leurs fiches seraient ajoutées une seconde fois, avec les factures rattachées aux doublons)
+    origines = [f.read_text(encoding="utf-8-sig") for _i, f, _d in lus]
     for ident, f, d in lus:
         d["clients"], d["clientsSupprimes"] = communs["clients"], communs["clientsSupprimes"]
-        ecrire_json(f, d)
-        communs["empreintes"][ident] = {"fichier": empreinte(d), "fiches": {c["uid"]: empreinte(c) for c in communs["clients"] + communs["clientsSupprimes"]}}
-    ecrire_json(FICHIER_CLIENTS, communs)
+    temoin = {"fichiers": [{"chemin": str(f.relative_to(DONNEES)), "origine": o,
+                            "ecrit": hashlib.sha256(json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8")).hexdigest()}
+                           for (_i, f, d), o in zip(lus, origines)]}
+    try:
+        ecrire_json(FICHIER_MIGRATION, temoin)
+        for ident, f, d in lus:
+            ecrire_json(f, d)
+            communs["empreintes"][ident] = {"fichier": empreinte(d), "fiches": {c["uid"]: empreinte(c) for c in communs["clients"] + communs["clientsSupprimes"]}}
+        ecrire_json(FICHIER_CLIENTS, communs)
+    except Exception as e:
+        non_remis = restaurer_migration_interrompue()
+        if non_remis:
+            raise RuntimeError(f"{e} ; ATTENTION, fichier(s) déjà transformé(s) et non remis en état : {', '.join(non_remis)}") from e
+        raise
+    try:
+        FICHIER_MIGRATION.unlink()
+    except OSError:
+        pass
     return f"{len(communs['clients'])} clients actifs, {len(communs['clientsSupprimes'])} à la corbeille" + (" ; " + " ; ".join(resume) if resume else "")
 
 
@@ -1131,10 +1332,11 @@ def reprendre_fichiers_modifies():
         sauvegarder_donnees(f"avant_reprise_{datetime.now():%Y-%m-%d_%H%M%S}", seulement=e["id"])
         communs["_base"] = connu.get("fiches") or {}
         factures = (d.get("factures") or []) + (d.get("facturesSupprimes") or [])
-        r = integrer_clients(communs, d.get("clients") or [], d.get("clientsSupprimes") or [], factures, "source")
+        # Fichier jamais intégré (laissé de côté à la transformation car illisible, puis restauré) : comme à la
+        # transformation, ses fiches s'ajoutent sans modifier celles déjà connues
+        r = integrer_clients(communs, d.get("clients") or [], d.get("clientsSupprimes") or [], factures, "source" if connu else "ajout")
         d["clients"], d["clientsSupprimes"] = communs["clients"], communs["clientsSupprimes"]
-        ecrire_json(f, d)
-        ecrire_communs(communs, e["id"], d)
+        ecrire_entreprise(f, d, communs, e["id"])
         journal(f"Fichier de l'entreprise {e['id']} modifié hors de cette version : réintégré ({r})")
         change = True
     return change
@@ -1366,7 +1568,10 @@ class Gestionnaire(BaseHTTPRequestHandler):
             return self.envoyer(200, {"app": "facturier", "version": VERSION, "preuve": preuve})
         if not api and u.path not in ("/arret", "/code"):
             return self.envoyer(404, {"erreur": "Introuvable"})
-        corps = self.rfile.read(int(self.headers.get("Content-Length") or 0)) if methode in ("POST", "PUT") else b""
+        taille = int(self.headers.get("Content-Length") or 0) if methode in ("POST", "PUT") else 0
+        if taille > 64 * 1024 * 1024:
+            return self.envoyer(413, {"erreur": "Fichier trop volumineux (plus de 64 Mo) : rien n'a été fait"})
+        corps = self.rfile.read(taille) if taille else b""
         if u.path == "/code" and methode == "POST":
             if secrets.compare_digest(self.headers.get("X-Arret", ""), ARRET):
                 return self.envoyer(200, {"code": nouveau_code()})
@@ -1374,6 +1579,7 @@ class Gestionnaire(BaseHTTPRequestHandler):
         if u.path == "/arret" and methode == "POST":
             # Arrêt demandé par une version plus récente du programme (clé lue dans le dossier des données)
             if secrets.compare_digest(self.headers.get("X-Arret", ""), ARRET):
+                RELEVE.set()
                 self.envoyer(200, {"ok": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -1405,6 +1611,11 @@ class Gestionnaire(BaseHTTPRequestHandler):
             journal(f"{methode} {u.path} : erreur {e.code} {str(msg)[:200]}")
             return self.envoyer(502 if e.code >= 500 else (e.code if e.code in (403, 404, 409) else 400), {"erreur": msg, "code": e.code, "detail": e.corps if not isinstance(e.corps, str) else None})
         except OSError as e:
+            if getattr(e, "filename", None) and not isinstance(e, urllib.error.URLError):
+                # Fichier du PC (données, sauvegardes) : pas un problème de connexion
+                journal(f"{methode} {u.path} : fichier inaccessible ({e})")
+                return self.envoyer(500, {"erreur": f"Fichier {Path(e.filename2 or e.filename).name} inaccessible sur ce PC (antivirus, synchronisation "
+                                                    f"OneDrive, disque plein ?) : rien n'a été perdu, nouvel essai dans un instant ({e.strerror or e})"})
             journal(f"{methode} {u.path} : Super PDP injoignable ({e})")
             return self.envoyer(502, {"erreur": f"Super PDP injoignable : vérifiez la connexion internet ({e})"})
         except Exception as e:  # noqa: BLE001 — on renvoie toujours une réponse lisible
@@ -1560,13 +1771,32 @@ def main():
                 return
             time.sleep(0.5)
     DONNEES.mkdir(parents=True, exist_ok=True)
-    erreur = appliquer_migrations()
+    format_avant = format_donnees()
+    try:
+        erreur = appliquer_migrations()
+    except Exception as e:  # noqa: BLE001
+        erreur = f"Erreur au démarrage : {e!r}"
     if erreur:
         serveur.server_close()
-        message(erreur + "\n\nVos données n'ont pas été modifiées (copie de sécurité « avant_format » dans le dossier des sauvegardes).\n"
-                "Revenez à la version précédente (dossier « programme_precedent ») ou prévenez Antoine.")
+        # Pas de retour si une transformation a déjà été enregistrée : l'ancienne version ne connaît pas ce format
+        precedente = retour_automatique(erreur) if format_donnees() == format_avant else None
+        if precedente:
+            message(f"La nouvelle version {VERSION} du Facturier n'a pas pu démarrer ({erreur}).\n\n"
+                    f"Retour automatique à la version {precedente} : le Facturier va se rouvrir. Prévenez Antoine.")
+            lancer_programme(fenetre)
+            return
+        message(erreur + ("\n\nNe rouvrez pas le Facturier avant d'avoir prévenu Antoine : une copie de sécurité « avant_format » est dans le dossier des sauvegardes."
+                          if "ATTENTION" in erreur else
+                          "\n\nVos données n'ont pas été modifiées (copie de sécurité « avant_format » dans le dossier des sauvegardes).\n"
+                          "Revenez à la version précédente (dossier « programme_precedent ») ou prévenez Antoine."))
         return
     FICHIER_ARRET.write_text(json.dumps({"cle": ARRET, "preuve": PREUVE, "version": VERSION}), encoding="utf-8")
+    try:                                     # témoin : cette version démarre jusqu'au bout sur ce PC
+        tmp = FICHIER_DEMARRAGE.with_suffix(".tmp")
+        tmp.write_text(VERSION, encoding="utf-8")
+        os.replace(tmp, FICHIER_DEMARRAGE)
+    except OSError:
+        pass
     journal(f"Démarrage version {VERSION} ({page_facturier().name}, API {API})")
     print(f"Facturier actif à l'adresse {adresse}")
     if fenetre:
