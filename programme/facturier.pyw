@@ -996,17 +996,36 @@ def lancer_programme(fenetre=False):
                      cwd=str(ICI), close_fds=True, env=env, **options)
 
 
-def redemarrer(delai=60):
+def remettre_precedente(fichiers):
+    """« programme_precedent » remis tel qu'il était (fichiers gardés en mémoire), ou retiré s'il n'existait pas."""
+    if not fichiers:
+        if PRECEDENT.exists():
+            _effacer_dossier(PRECEDENT)
+        return
+    if PREPARE.exists():
+        _effacer_dossier(PREPARE)
+    PREPARE.mkdir()
+    for nom, contenu in fichiers.items():
+        (PREPARE / nom).write_bytes(contenu)
+    garder_comme_precedente()
+
+
+def redemarrer(ancien, precedente_avant, version_cible=None, delai=60):
     """Lance la nouvelle version, qui arrête celle-ci (même mécanisme qu'à l'ouverture). Si elle ne l'a pas fait
-    au bout de `delai` secondes (plantage dès son lancement), les fichiers de cette version-ci sont remis en place
-    et elle continue de servir : le Facturier reste utilisable."""
+    au bout de `delai` secondes (plantage dès son lancement), les fichiers de CETTE version, gardés en mémoire avant
+    l'installation (`ancien`), sont remis en place — jamais le contenu de « programme_precedent », qui n'a peut-être pas
+    pu être rangé — puis « programme_precedent » redevient ce qu'il était : le bouton « Revenir » ne propose jamais
+    la version qui n'a pas démarré. Cette version continue de servir : le Facturier reste utilisable."""
+    ignoree_avant = maj_ignoree()
+
     def surveiller():
         if RELEVE.wait(delai):
             return
         with VERROU_MAJ:                 # même verrou que l'installation et le retour : jamais deux à la fois
             try:
-                installer_programme(fichiers_programme(PRECEDENT))   # « programme_precedent » = cette version-ci
-                (DONNEES / "maj_ignoree.txt").write_text(version_de(PRECEDENT) or "", encoding="utf-8")
+                installer_programme(ancien)
+                remettre_precedente(precedente_avant)
+                (DONNEES / "maj_ignoree.txt").write_text(version_cible or ignoree_avant, encoding="utf-8")
                 journal(f"La nouvelle version n'a pas démarré en {delai} s : retour automatique à la version {VERSION}")
                 MAJ_FAITE.clear()        # cette version continue de servir : les boutons de mise à jour redeviennent utilisables
             except OSError as e:
@@ -1048,6 +1067,7 @@ def act_maj_installer(_q, _corps):
         raise ErreurAPI(400, "Téléchargement incomplet ou altéré : rien n'a été modifié, réessayez plus tard")
     fichiers = verifier_archive(archive, c["version"])
     sauvegarder_donnees(f"avant_maj_{VERSION}_vers_{c['version']}")
+    ancien, precedente_avant = fichiers_programme(ICI), (fichiers_programme(PRECEDENT) if PRECEDENT.is_dir() else {})
     installer_ou_expliquer(fichiers)
     MAJ_FAITE.set()
     try:
@@ -1055,7 +1075,7 @@ def act_maj_installer(_q, _corps):
     except OSError:
         pass
     journal(f"Mise à jour {VERSION} -> {c['version']} installée")
-    redemarrer()
+    redemarrer(ancien, precedente_avant, version_cible=c["version"])
     return {"ok": True, "version": c["version"]}
 
 
@@ -1066,11 +1086,12 @@ def act_maj_retour(_q, _corps):
         raise ErreurAPI(400, "Aucune version précédente à restaurer")
     sauvegarder_donnees(f"avant_retour_{VERSION}_vers_{precedente}")
     retour = fichiers_programme(PRECEDENT)
+    ancien = fichiers_programme(ICI)
     installer_ou_expliquer(retour)         # la version actuelle devient à son tour la « précédente »
     MAJ_FAITE.set()
     (DONNEES / "maj_ignoree.txt").write_text(VERSION, encoding="utf-8")
     journal(f"Retour à la version {precedente} (depuis {VERSION})")
-    redemarrer()
+    redemarrer(ancien, retour)
     return {"ok": True, "version": precedente}
 
 
