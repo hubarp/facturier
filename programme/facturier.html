@@ -569,7 +569,7 @@
       const actuel = (data.clients || []).find(c => c.numero === (f.clientId || snap.numero)) || {};
       // SIREN / n° de TVA complétés depuis la fiche actuelle seulement tant que la facture est modifiable (émise, non
       // déposée) : une facture envoyée ou payée se réimprime exactement comme elle était
-      const modifiable = !snap.nom || (f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe && !efactureEnEchec(f)));
+      const modifiable = !snap.nom || factureModifiable(f);
       return { ...(modifiable ? actuel : {}), ...snap, siren: snap.siren || (modifiable ? actuel.siren : '') || '', tvaIntra: snap.tvaIntra || (modifiable ? actuel.tvaIntra : '') || '',
         enseigne: snap.nom ? (snap.enseigne || '') : (actuel.enseigne || ''), livraison: snap.livraison && snap.livraison.adresse ? snap.livraison : null };
     };
@@ -577,9 +577,13 @@
     // quand la facture quitte l'état « émise » ou est déposée, pour qu'elle se réimprime ensuite à l'identique
     // Le vendeur (coordonnées, IBAN, mentions) est figé en même temps : changer les Paramètres ou importer une sauvegarde
     // ne modifie plus une facture envoyée ou payée
+    // Même règle que pour le client : tant que la facture est modifiable (émise, non déposée, ou rejetée par la plateforme),
+    // ce sont les Paramètres actuels qui comptent ; le vendeur figé ne sert qu'aux factures envoyées, payées ou déposées
+    const factureModifiable = (f) => f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe && !efactureEnEchec(f));
     const vendeurFige = ({ mode, prefixeFacture, ...e } = {}) => e;
-    const figerClient = (f, data) => ({ ...f, client: clientDeFacture(f, data), vendeur: f.vendeur || vendeurFige(data.entreprise) });
-    const vendeurDe = (f, data) => ({ ...(data.entreprise || {}), ...((f && f.vendeur) || {}) });
+    const sansVendeur = ({ vendeur, ...f }) => f;
+    const figerClient = (f, data) => ({ ...f, client: clientDeFacture(f, data), vendeur: !f.vendeur || factureModifiable(f) ? vendeurFige(data.entreprise) : f.vendeur });
+    const vendeurDe = (f, data) => (!f || !f.vendeur || factureModifiable(f)) ? { ...(data.entreprise || {}) } : { ...(data.entreprise || {}), ...f.vendeur };
     // Raison sociale (nom légal, sur les factures) et enseigne (nom d'usage, pour l'affichage et la recherche)
     const normNom = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
     const enseigneDistincte = (c) => (c && c.enseigne && normNom(c.enseigne) !== normNom(c.nom)) ? c.enseigne : '';
@@ -1167,7 +1171,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       out.facturesSupprimes = out.facturesSupprimes.map(f => f.mode ? f : { ...f, mode: modeActuel });
       const figer = (f) => (f.lignes || []).every(l => !l.produitRef || l.prixHT !== undefined) ? f : { ...f, lignes: figerLignes(f, d) };
       // Factures déjà envoyées, payées ou déposées d'avant le vendeur figé : figées avec les coordonnées actuelles
-      const figee = (f) => f.vendeur || (f.statut === 'emise' && !(f.efacture && (f.efacture.id || f.efacture.deposeeLe))) ? f : { ...f, vendeur: vendeurFige(d.entreprise) };
+      const figee = (f) => f.vendeur || factureModifiable(f) ? f : { ...f, vendeur: vendeurFige(d.entreprise) };
       out.factures = (d.factures || []).map(figer).map(figee);
       out.facturesSupprimes = (d.facturesSupprimes || []).map(figer).map(figee);
       return out;
@@ -1200,7 +1204,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const isOverdue = (f) => f.echeance && f.statut !== 'payee' && new Date(f.echeance) < new Date();
     const getFactureStatut = (f) => f.statut === 'payee' ? 'payee' : isOverdue(f) ? 'enretard' : f.statut;
     // Une facture électronique déposée (directement ou à la main) ne se modifie ni ne se supprime plus
-    const canEditFacture = (f) => f.statut === 'emise' && !efactureDeposee(f) && !(f.efacture && f.efacture.deposeeLe && !efactureEnEchec(f));
+    const canEditFacture = factureModifiable;
     const canDeleteFacture = canEditFacture;
 
     function App() {
@@ -1462,7 +1466,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           }
           if (STATUTS_ECHEC.includes(principal.code) && !STATUTS_ECHEC.includes(f.efacture.statut)) {
             rejets.push(`${f.numero} : ${principal.texte}${principal.raison ? ' — ' + principal.raison : ''}`);
-            return { ...f, efacture, statut: f.statut === 'envoyee' ? 'emise' : f.statut };
+            return { ...sansVendeur(f), efacture, statut: f.statut === 'envoyee' ? 'emise' : f.statut };
           }
           return { ...f, efacture };
         }) }));
@@ -1840,7 +1844,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const t = totauxFacture(f, data);
       const nomFichier = `${f.numero}_facture_electronique.pdf`;
       const majFacture = (maj) => updateData({ factures: data.factures.map(x => x.numero === f.numero
-        ? { ...(maj.efacture && (maj.efacture.id || maj.efacture.deposeeLe) && !(x.efacture && (x.efacture.id || x.efacture.deposeeLe)) ? figerClient(x, data) : x), ...maj } : x) });
+        ? { ...(maj.efacture && (maj.efacture.id || maj.efacture.deposeeLe) && factureModifiable(x) ? figerClient(x, data) : x), ...maj } : x) });
       const siren = chiffres(c.siren);
 
       const telechargerSeulement = async () => {
@@ -2024,6 +2028,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         } else {
           const updated = [...data.factures];
           updated[idx] = { ...figerClient(updated[idx], data), statut: newStatut, datePaiement: null };
+          if (factureModifiable(updated[idx])) updated[idx] = sansVendeur(updated[idx]);
           updateData({ factures: updated });
           showToast('Statut mis à jour');
         }
@@ -2345,6 +2350,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         else {
           const updated = [...data.factures];
           updated[index] = { ...figerClient(updated[index], data), statut: newStatut, datePaiement: null };
+          if (factureModifiable(updated[index])) updated[index] = sansVendeur(updated[index]);
           updateData({ factures: updated });
           showToast('Statut mis à jour');
         }
