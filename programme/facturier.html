@@ -1091,7 +1091,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     // Import d'une sauvegarde JSON dans l'entreprise ouverte (confirmation, copie de sécurité côté programme local)
     const importerSauvegarde = async (texte, data, updateData, showToast) => {
       let d;
-      try { d = migrerDonnees({ ...INITIAL_DATA, ...JSON.parse(texte) }); } catch { showToast('Fichier invalide : rien n\'a été importé'); return; }
+      try { d = migrerDonnees({ ...INITIAL_DATA, ...JSON.parse(texte) }); } catch { showToast('Fichier invalide : rien n\'a été importé'); alert('Fichier invalide : ce n\'est pas une sauvegarde JSON du Facturier. Rien n\'a été importé.'); return; }
       const dernier = (l) => [...(l || [])].map(f => f.numero).sort().pop() || 'aucune';
       const nomSauv = (d.entreprise && d.entreprise.raisonSociale) || 'sans nom';
       const nomActuel = data.entreprise.raisonSociale || 'l\'entreprise ouverte';
@@ -1111,7 +1111,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
           await envoyer(true);
         }
         location.reload();
-      } catch (e) { ECRITURE.bloque = false; showToast(`Import refusé : ${e.message}`); }
+      } catch (e) { ECRITURE.bloque = false; showToast(`Import refusé : ${e.message}`); alert(`Import refusé : ${e.message}\n\nRien n'a été modifié.`); }
     };
     const COULEURS_ENTREPRISE = ['#7c3aed', '#0f766e', '#b45309', '#be185d'];
     const EntrepriseCtx = React.createContext({ liste: [], active: 'principale' });
