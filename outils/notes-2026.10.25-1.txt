@@ -1,0 +1,5 @@
+Sécurité : factures reçues affichées sans risque, clé Super PDP chiffrée pour votre compte Windows, Facturier accessible seulement depuis sa propre fenêtre.
+Fiabilité : retour automatique à la version précédente si une nouvelle version ne démarre pas, enregistrements et sauvegardes plus sûrs, import contrôlé (confirmation si l'IBAN ou le SIRET change).
+Factures : refus du client et rejet de la plateforme distingués (une facture rejetée se corrige et se renvoie), DRM avec une colonne Union européenne.
+Après la mise à jour, si une fenêtre affiche seulement « Ouvrez le Facturier par son icône », fermez-la.
+Attention : revenir ensuite à une version plus ancienne fera perdre la connexion Super PDP (identifiant et secret à ressaisir dans Paramètres).

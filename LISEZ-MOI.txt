@@ -88,6 +88,10 @@ MISES À JOUR
   tout seul quelques secondes plus tard. Vos données ne sont pas touchées (et sont sauvegardées avant).
 - Paramètres > Mises à jour : voir la version installée, rechercher une mise à jour,
   ou revenir à la version précédente en cas de souci.
+- Revenir à une version plus ancienne que 2026.10.25-1 : sous Windows, cette ancienne version ne sait pas lire
+  la clé Super PDP chiffrée. Il faudra ressaisir l'identifiant et le secret (Paramètres > Connexion Super PDP).
+- Après une mise à jour, si une fenêtre affiche seulement « Ouvrez le Facturier par son icône », fermez-la :
+  le Facturier s'est rouvert dans une autre fenêtre (ou rouvrez-le par son icône).
 - Si « La mise à jour n'a pas abouti » s'affiche (une fois, sur certains PC) : fermez la fenêtre, rouvrez le
   Facturier par son icône, puis vérifiez la version dans Paramètres > Mises à jour.
 - Si une nouvelle version ne démarre pas, le Facturier revient tout seul à la version précédente et l'indique :
