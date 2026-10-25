@@ -7,6 +7,7 @@ avec les identifiants, qui restent sur ce PC et ne sont jamais envoyés au navig
 Python 3.9 ou plus récent, sans module supplémentaire. Lancé par le raccourci « Facturier »
 (créé par « Installer le Facturier.bat »). Reste actif, invisible, jusqu'à la fermeture de la session Windows.
 """
+import base64
 import hashlib
 import hmac
 import http.client
@@ -166,6 +167,66 @@ def page_facturier():
     return max(candidats, key=lambda f: f.stat().st_mtime) if candidats else None
 
 
+# Secret Super PDP chiffré par DPAPI (Windows, portée du compte utilisateur), sans module supplémentaire.
+# - Windows : le secret est écrit sous SUPER_PDP_CLIENT_SECRET_DPAPI (base64 d'un blob DPAPI).
+# - Ancien fichier en clair (SUPER_PDP_CLIENT_SECRET=...) : toujours lu, puis réécrit chiffré à la première lecture.
+# - Hors Windows (tests) : en clair, comme avant.
+# - Fichier recopié d'un autre PC ou d'un autre compte : identifiants considérés comme absents, à ressaisir.
+def _preparer_dpapi():
+    """Fonctions chiffrer/dechiffrer de Windows (DPAPI), ou (None, None) : jamais d'erreur au lancement, même si
+    crypt32 est introuvable (le secret reste alors en clair, comme dans les versions précédentes)."""
+    if sys.platform != "win32":
+        return None, None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+        _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+        _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _crypt32.CryptProtectData.argtypes = [ctypes.POINTER(_BLOB), wintypes.LPCWSTR, ctypes.POINTER(_BLOB),
+                                              ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_BLOB)]
+        _crypt32.CryptProtectData.restype = wintypes.BOOL
+        _crypt32.CryptUnprotectData.argtypes = [ctypes.POINTER(_BLOB), ctypes.c_void_p, ctypes.POINTER(_BLOB),
+                                                ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_BLOB)]
+        _crypt32.CryptUnprotectData.restype = wintypes.BOOL
+        _kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        _kernel32.LocalFree.restype = ctypes.c_void_p
+        _UI_FORBIDDEN = 0x1                           # CRYPTPROTECT_UI_FORBIDDEN ; PAS de LOCAL_MACHINE (portée utilisateur)
+        _ENTROPIE = b"facturier/superpdp/v1"          # n'est pas un secret : évite qu'un autre programme DPAPI déchiffre « par hasard »
+
+        def _blob(donnees):
+            tampon = ctypes.create_string_buffer(donnees, len(donnees))
+            return _BLOB(len(donnees), ctypes.cast(tampon, ctypes.POINTER(ctypes.c_char))), tampon
+
+        def _appel(fonction, donnees, *description):
+            entree, _t1 = _blob(donnees)
+            entropie, _t2 = _blob(_ENTROPIE)
+            sortie = _BLOB()
+            if not fonction(ctypes.byref(entree), *description, ctypes.byref(entropie), None, None, _UI_FORBIDDEN, ctypes.byref(sortie)):
+                raise OSError(ctypes.get_last_error(), "DPAPI a refusé l'opération")
+            try:
+                return ctypes.string_at(sortie.pbData, sortie.cbData)
+            finally:
+                _kernel32.LocalFree(sortie.pbData)
+
+        def chiffrer(texte):
+            return base64.b64encode(_appel(_crypt32.CryptProtectData, texte.encode("utf-8"), "Facturier")).decode("ascii")
+
+        def dechiffrer(b64):
+            return _appel(_crypt32.CryptUnprotectData, base64.b64decode(b64), None).decode("utf-8")
+
+        return chiffrer, dechiffrer
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
+chiffrer, dechiffrer = _preparer_dpapi()
+DPAPI = chiffrer is not None
+
+
 def lire_identifiants():
     ids = {}
     if fichier_ids().exists():
@@ -174,15 +235,37 @@ def lire_identifiants():
                 k, v = ligne.split("=", 1)
                 ids[k.strip()] = v.strip()
     cid, sec = ids.get("SUPER_PDP_CLIENT_ID", ""), ids.get("SUPER_PDP_CLIENT_SECRET", "")
+    if ids.get("SUPER_PDP_CLIENT_SECRET_DPAPI"):
+        if not DPAPI:
+            return None
+        try:
+            sec = dechiffrer(ids["SUPER_PDP_CLIENT_SECRET_DPAPI"])
+        except (OSError, ValueError):
+            journal("Identifiants Super PDP illisibles sur ce compte Windows (fichier copié d'un autre PC ?) : à ressaisir")
+            return None
+    elif cid and sec and DPAPI:
+        try:
+            ecrire_identifiants(cid, sec)          # ancien fichier en clair : réécrit chiffré une fois pour toutes
+            if "SUPER_PDP_CLIENT_SECRET_DPAPI=" in fichier_ids().read_text(encoding="utf-8"):
+                journal("Identifiants Super PDP chiffrés (DPAPI)")
+        except OSError:
+            pass
     return (cid, sec) if cid and sec else None
 
 
 def ecrire_identifiants(cid, sec):
     dossier().mkdir(parents=True, exist_ok=True)
+    ligne = f"SUPER_PDP_CLIENT_SECRET={sec}"
+    if DPAPI and sec:
+        try:
+            ligne = f"SUPER_PDP_CLIENT_SECRET_DPAPI={chiffrer(sec)}"
+        except OSError as e:               # DPAPI indisponible sur ce compte : en clair, comme avant
+            journal(f"Chiffrement DPAPI impossible ({e}) : secret Super PDP gardé en clair")
+    note = ("# Le secret est chiffré pour ce compte Windows : recopié sur un autre PC, il faudra le ressaisir.\n"
+            if ligne.startswith("SUPER_PDP_CLIENT_SECRET_DPAPI=") else "")
     tmp = fichier_ids().with_suffix(".tmp")          # jamais de fichier à moitié écrit (coupure pendant l'écriture)
-    tmp.write_text(
-        "# Identifiants de l'application Super PDP (ne pas partager ce fichier)\n"
-        f"SUPER_PDP_CLIENT_ID={cid}\nSUPER_PDP_CLIENT_SECRET={sec}\n", encoding="utf-8")
+    tmp.write_text("# Identifiants de l'application Super PDP (ne pas partager ce fichier)\n" + note +
+                   f"SUPER_PDP_CLIENT_ID={cid}\n{ligne}\n", encoding="utf-8")
     os.replace(tmp, fichier_ids())
 
 
