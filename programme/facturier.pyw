@@ -1089,12 +1089,18 @@ def norm_nom(v):
     return re.sub(r"[^a-z0-9]", "", "".join(ch for ch in v if unicodedata.category(ch) != "Mn"))
 
 
+def octets_json(obj):
+    """Octets exacts d'un fichier JSON du Facturier : les mêmes sur toutes les plateformes (fins de ligne « \\n »,
+    jamais traduites en « \\r\\n » par Windows), pour que les empreintes comparent exactement ce qui est écrit."""
+    return json.dumps(obj, ensure_ascii=False, indent=1).encode("utf-8")
+
+
 def ecrire_json(chemin, obj):
     """Écriture sûre : fichier temporaire vidé sur le disque, puis remplacement d'un seul coup."""
     chemin.parent.mkdir(parents=True, exist_ok=True)
     tmp = chemin.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(obj, ensure_ascii=False, indent=1))
+    with open(tmp, "wb") as fh:                 # binaire : octets_json(obj) tels quels, sous Windows comme ailleurs
+        fh.write(octets_json(obj))
         fh.flush()
         os.fsync(fh.fileno())
     for essai in range(5):                      # antivirus / synchronisation qui tiennent le fichier un instant
@@ -1546,10 +1552,10 @@ def restaurer_migration_interrompue():
             actuel = hashlib.sha256(f.read_bytes()).hexdigest() if f.exists() else None
             if actuel == x["ecrit"]:                       # encore tel que la transformation l'a écrit
                 tmp = f.with_suffix(".tmp")
-                tmp.write_text(x["origine"], encoding="utf-8")
+                tmp.write_bytes(x["origine"].encode("utf-8"))   # octets d'origine exacts (fins de ligne, BOM compris)
                 os.replace(tmp, f)
                 journal(f"Transformation interrompue : {x['chemin']} remis dans son état d'origine")
-            elif actuel is not None and f.read_text(encoding="utf-8-sig") != x["origine"]:
+            elif actuel is not None and f.read_bytes() != x["origine"].encode("utf-8"):
                 non_remis.append(x["chemin"])               # modifié depuis par autre chose : on n'y touche pas
         except OSError:
             non_remis.append(x["chemin"])
@@ -1592,11 +1598,11 @@ def migration_1_clients_communs():
     # Un témoin garde le contenu d'origine de chaque fichier : si l'écriture s'interrompt (erreur, coupure de courant),
     # les fichiers déjà transformés sont remis à l'identique, ici ou au lancement suivant, et la transformation reprend
     # de zéro (sinon leurs fiches seraient ajoutées une seconde fois, avec les factures rattachées aux doublons)
-    origines = [f.read_text(encoding="utf-8-sig") for _i, f, _d in lus]
+    origines = [f.read_bytes().decode("utf-8") for _i, f, _d in lus]     # octets exacts (lisibles : lire_json a réussi)
     for ident, f, d in lus:
         d["clients"], d["clientsSupprimes"] = communs["clients"], communs["clientsSupprimes"]
     temoin = {"fichiers": [{"chemin": str(f.relative_to(DONNEES)), "origine": o,
-                            "ecrit": hashlib.sha256(json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8")).hexdigest()}
+                            "ecrit": hashlib.sha256(octets_json(d)).hexdigest()}
                            for (_i, f, d), o in zip(lus, origines)]}
     try:
         ecrire_json(FICHIER_MIGRATION, temoin)
