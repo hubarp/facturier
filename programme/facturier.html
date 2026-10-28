@@ -702,15 +702,15 @@
       pied.push({ texte: 'Coordonnées bancaires', gras: true, mt: 10 });
       if (e.rib) pied.push({ texte: e.banque || '' }, { texte: e.rib });
       else { pied.push({ texte: e.banque || '' }); if (e.iban) pied.push({ texte: `IBAN : ${e.iban}${e.bic ? ` — BIC : ${e.bic}` : ''}` }); }
-      if (!simple || e.numeroAccise) pied.push({ texte: `Numéro d'accise : ${e.numeroAccise || ''}`, mt: 5 });
       return {
         t,
-        emetteur: { nom: e.raisonSociale || '', lignes: [e.forme || '', e.adresse || '', `${e.codePostal || ''} ${e.ville || ''}`, `Téléphone : ${e.telephone || ''} - ${e.email || ''}`, `Siret : ${e.siret || ''}`, `N° TVA : ${e.tvaIntra || ''}`, ...(!simple || e.eori ? [`n° EORI : ${e.eori || ''}`] : [])] },
+        emetteur: { nom: e.raisonSociale || '', lignes: [e.forme || '', e.adresse || '', `${e.codePostal || ''} ${e.ville || ''}`, `Téléphone : ${e.telephone || ''} - ${e.email || ''}`, `Siret : ${e.siret || ''}`, `N° TVA : ${e.tvaIntra || ''}`, ...(!simple || e.eori ? [`N° EORI : ${e.eori || ''}`] : []),
+          ...(!simple || e.ea ? [`N° EA : ${e.ea || ''}`] : []), ...(!simple || e.numeroAccise ? [`N° d'accise : ${e.numeroAccise || ''}`] : [])] },
         titre: `FACTURE N° ${f.numero}`, date: `Date : ${formatDate(f.date)}`,
         client: { titre: `A : ${c.nom || ''}`, lignes: [enseigneDistincte(c), `Adresse : ${c.adresse || ''}`, `${c.codePostal || ''} ${c.ville || ''}`, c.pays || ''].filter(Boolean),
           lignes2: [`Code client : ${c.numero || ''}`, c.siren ? `SIREN : ${c.siren}` : '', c.tvaIntra ? `N° TVA : ${c.tvaIntra}` : ''].filter(Boolean) },
         livraison: lv ? { titre: 'Livré à :', lignes: [lv.nom || '', lv.adresse || '', `${lv.codePostal || ''} ${lv.ville || ''}`, lv.pays || ''].filter(s => s.trim()), lignes2: [] } : null,
-        transport: simple ? [] : [[['Transporteur :', f.transporteur || ''], ['n° EA :', e.ea || '']], [['Plaque :', f.plaque || ''], ['Opération :', 'livraison de biens']]],
+        transport: simple ? [] : [[['Transporteur :', f.transporteur || ''], ['Plaque :', f.plaque || '']], [['Opération :', 'livraison de biens']]],
         colonnes: [...(simple ? [] : [['Référence', 'g']]), ['Description', 'g'], ['PU HT', 'd'], ['Quantité', 'c'], ['Montant HT', 'd'], ['Taux TVA', 'c']],
         lignes: t.lignes.map(l => [...(simple ? [] : [estExceptionnel(l) ? '' : l.produitRef]), l.libelle, prixUnitaire(l.prixHT), String(l.quantite), eur(l.montantHT), `${tauxTxt(t.taux)} %`]),
         infos: [['Échéance :', formatDate(f.echeance)], ...(simple ? [] : [['Nb bouteilles', String(t.nbBouteilles)]]), ['Règlement :', f.reglement || 'virement']],
@@ -2458,7 +2458,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <div className="card-title">Transport</div>
               <div className="form-grid">
                 <div className={`form-group required ${errors.transporteur ? 'error' : ''}`}>
-                  <label>Transporteur / Client</label>
+                  <label>Transporteur</label>
                   <input value={form.transporteur} onChange={e => setForm({...form, transporteur: e.target.value})} className={errors.transporteur ? 'error' : ''} />
                 </div>
                 <div className={`form-group required ${errors.plaque ? 'error' : ''}`}>
