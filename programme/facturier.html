@@ -1896,9 +1896,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         majFacture(nouvelle); setAjout(false);
         showToast(nouvelle.statut === 'payee' ? 'Paiement enregistré : facture payée' : `Paiement enregistré : reste ${formatMoney(resteDu(nouvelle))}`);
       };
-      const retirer = () => { majFacture(sansPaiement(f, retrait)); setRetrait(null); showToast('Paiement retiré'); };
+      // Facture payée avant les paiements fractionnés : son paiement unique (déduit) devient d'abord un vrai paiement enregistré
+      const reelle = () => (Array.isArray(f.paiements) && f.paiements.length) ? f : { ...f, paiements: liste.map(({ ancien, ...x }) => ({ ...x, date: x.date || '', montant: (parseFloat(x.montant) || 0).toFixed(2), note: x.note || '' })) };
+      const retirer = () => { majFacture(sansPaiement(reelle(), retrait)); setRetrait(null); showToast('Paiement retiré'); };
       const corriger = (p) => {
-        const nouvelle = avecPaiementModifie(f, correction, p);
+        const nouvelle = avecPaiementModifie(reelle(), correction, p);
         majFacture(nouvelle); setCorrection(null);
         showToast(nouvelle.statut === 'payee' ? 'Paiement corrigé : facture payée' : `Paiement corrigé : reste ${formatMoney(resteDu(nouvelle))}`);
       };
@@ -1916,16 +1918,16 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               {liste.map((p, i) => (
                 <tr key={i}><td>{p.date ? formatDate(p.date) : 'sans date'}</td><td style={{textAlign: 'right'}}>{formatMoney(p.montant)}</td>
                   <td>{(MODES_PAIEMENT.find(([k]) => k === p.mode) || [, p.mode])[1]}</td><td>{p.ancien ? <span style={{color: 'var(--text-muted)'}}>paiement enregistré en une fois</span> : p.note}</td>
-                  <td style={{whiteSpace: 'nowrap', textAlign: 'right'}}>{!p.ancien && <>
+                  <td style={{whiteSpace: 'nowrap', textAlign: 'right'}}>
                     <button className="btn btn-icon btn-ghost edit" title="Corriger ce paiement" onClick={() => setCorrection(i)}>{Icons.edit}</button>
-                    <button className="btn btn-icon btn-ghost delete" title="Retirer ce paiement" onClick={() => setRetrait(i)}>{Icons.trash}</button></>}</td></tr>
+                    <button className="btn btn-icon btn-ghost delete" title="Retirer ce paiement" onClick={() => setRetrait(i)}>{Icons.trash}</button></td></tr>
               ))}
             </tbody></table>
           )}
           {resteDu(f) > 0 && <div className="btn-group"><button className="btn btn-success" onClick={() => setAjout(true)}>Enregistrer un paiement</button></div>}
           {ajout && <PaiementModal facture={f} onConfirm={ajouter} onCancel={() => setAjout(false)} />}
           {correction !== null && <PaiementModal facture={f} initial={liste[correction]} onConfirm={corriger} onCancel={() => setCorrection(null)} />}
-          {retrait !== null && <ConfirmModal title="Retirer ce paiement ?" message={`Paiement de ${formatMoney(liste[retrait].montant)} du ${formatDate(liste[retrait].date)}. La facture redeviendra « envoyée » si elle n'est plus soldée.`} onConfirm={retirer} onCancel={() => setRetrait(null)} />}
+          {retrait !== null && <ConfirmModal title="Retirer ce paiement ?" message={`Paiement de ${formatMoney(liste[retrait].montant)}${liste[retrait].date ? ' du ' + formatDate(liste[retrait].date) : ''}. La facture redeviendra « envoyée » si elle n'est plus soldée.`} onConfirm={retirer} onCancel={() => setRetrait(null)} />}
         </div>
       );
     }
