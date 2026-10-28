@@ -179,14 +179,14 @@
     .manual-toggle:hover { text-decoration: underline; }
     /* Facture list in suivi */
     .facture-detail-list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: 12px; }
-    .facture-detail-item { display: grid; grid-template-columns: 100px 1fr 100px 100px 80px; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); align-items: center; font-size: 13px; }
+    .facture-detail-item { display: grid; grid-template-columns: 100px 1fr 110px 130px 150px; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); align-items: center; font-size: 13px; }
     .facture-detail-item:last-child { border-bottom: none; }
     .facture-detail-item:hover { background: var(--bg); }
     .facture-detail-item .numero { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
     .facture-detail-item .client { font-weight: 500; }
     .facture-detail-item .amount { font-weight: 600; color: var(--primary); text-align: right; }
     .facture-detail-item .date { color: var(--text-muted); font-size: 12px; }
-    .facture-detail-item .actions { display: flex; gap: 4px; justify-content: flex-end; }
+    .facture-detail-item .actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; padding-left: 12px; border-left: 1px solid var(--border); }
     .section-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
     .section-header .toggle { font-size: 12px; color: var(--primary); }
     /* DRM / Tableau de bord */
@@ -1220,6 +1220,12 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const solde = round2(paiements.reduce((s, x) => s + (parseFloat(x.montant) || 0), 0)) >= round2(parseFloat(f.totalTTC) || 0) - 0.005;
       return { ...f, paiements, statut: solde ? 'payee' : (f.statut === 'emise' ? 'envoyee' : f.statut), datePaiement: solde ? p.date : null };
     };
+    const avecPaiementModifie = (f, i, p) => {
+      const paiements = (f.paiements || []).map((x, j) => j === i ? { date: p.date, montant: round2(parseFloat(p.montant)).toFixed(2), mode: p.mode || '', note: (p.note || '').trim() } : x);
+      const solde = round2(paiements.reduce((s, x) => s + (parseFloat(x.montant) || 0), 0)) >= round2(parseFloat(f.totalTTC) || 0) - 0.005;
+      const derniere = [...paiements].map(x => x.date).sort().pop();
+      return { ...f, paiements, statut: solde ? 'payee' : (f.statut === 'payee' ? 'envoyee' : f.statut), datePaiement: solde ? derniere : null };
+    };
     const sansPaiement = (f, i) => {
       const paiements = (f.paiements || []).filter((_, j) => j !== i);
       const solde = paiements.length && round2(paiements.reduce((s, x) => s + (parseFloat(x.montant) || 0), 0)) >= round2(parseFloat(f.totalTTC) || 0) - 0.005;
@@ -1834,12 +1840,13 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     }
 
     // Saisie d'un paiement (total ou partiel)
-    function PaiementModal({ facture, onConfirm, onCancel }) {
-      const reste = resteDu(facture);
-      const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-      const [montant, setMontant] = useState(reste.toFixed(2));
-      const [mode, setMode] = useState(MODES_PAIEMENT.some(([k]) => k === facture.reglement) ? facture.reglement : 'virement');
-      const [note, setNote] = useState('');
+    // initial : paiement à corriger (son montant redevient disponible dans le reste à payer)
+    function PaiementModal({ facture, onConfirm, onCancel, initial = null }) {
+      const reste = round2(resteDu(facture) + (initial ? parseFloat(initial.montant) || 0 : 0));
+      const [date, setDate] = useState(initial ? initial.date : new Date().toISOString().split('T')[0]);
+      const [montant, setMontant] = useState(initial ? (parseFloat(initial.montant) || 0).toFixed(2) : reste.toFixed(2));
+      const [mode, setMode] = useState(initial ? (initial.mode || 'virement') : (MODES_PAIEMENT.some(([k]) => k === facture.reglement) ? facture.reglement : 'virement'));
+      const [note, setNote] = useState(initial ? initial.note || '' : '');
       const [erreur, setErreur] = useState('');
       const valider = () => {
         const m = round2(parseFloat(String(montant).replace(',', '.')));
@@ -1853,11 +1860,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         <div className="modal-overlay" onClick={onCancel}>
           <div className="modal small" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">Paiement reçu — {facture.numero}</div>
+              <div className="modal-title">{initial ? 'Corriger le paiement' : 'Paiement reçu'} — {facture.numero}</div>
               <button className="close-btn" onClick={onCancel}>×</button>
             </div>
             <p style={{marginBottom: 12, color: 'var(--text-muted)', fontSize: 13}}>
-              Total {formatMoney(facture.totalTTC)}{dejaPaye(facture) > 0 && <> — déjà réglé {formatMoney(dejaPaye(facture))}</>} — reste à payer <strong>{formatMoney(reste)}</strong>
+              Total {formatMoney(facture.totalTTC)}{round2(dejaPaye(facture) - (initial ? parseFloat(initial.montant) || 0 : 0)) > 0 && <> — {initial ? 'autres paiements' : 'déjà réglé'} {formatMoney(round2(dejaPaye(facture) - (initial ? parseFloat(initial.montant) || 0 : 0)))}</>} — {initial ? 'montant possible' : 'reste à payer'} <strong>{formatMoney(reste)}</strong>
             </p>
             <div className="form-grid">
               <div className="form-group"><label>Date du paiement</label><input type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
@@ -1868,7 +1875,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             <p style={{fontSize: 12, color: partiel ? '#b45309' : 'var(--text-muted)', marginTop: 4}}>{partiel ? `Paiement partiel : il restera ${formatMoney(round2(reste - (parseFloat(String(montant).replace(',', '.')) || 0)))} à payer.` : 'La facture sera marquée payée.'}</p>
             {erreur && <div className="vies vies-ko">{erreur}</div>}
             <div className="btn-group" style={{marginTop: 16}}>
-              <button className="btn btn-success" onClick={valider}>Enregistrer le paiement</button>
+              <button className="btn btn-success" onClick={valider}>{initial ? 'Enregistrer la correction' : 'Enregistrer le paiement'}</button>
               <button className="btn btn-outline" onClick={onCancel}>Annuler</button>
             </div>
           </div>
@@ -1881,6 +1888,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const f = data.factures.find(x => x.numero === facture.numero) || facture;
       const [ajout, setAjout] = useState(false);
       const [retrait, setRetrait] = useState(null);
+      const [correction, setCorrection] = useState(null);
       const liste = paiementsDe(f);
       const majFacture = (nouvelle) => updateData({ factures: data.factures.map(x => x === f ? nouvelle : x) });
       const ajouter = (p) => {
@@ -1889,6 +1897,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         showToast(nouvelle.statut === 'payee' ? 'Paiement enregistré : facture payée' : `Paiement enregistré : reste ${formatMoney(resteDu(nouvelle))}`);
       };
       const retirer = () => { majFacture(sansPaiement(f, retrait)); setRetrait(null); showToast('Paiement retiré'); };
+      const corriger = (p) => {
+        const nouvelle = avecPaiementModifie(f, correction, p);
+        majFacture(nouvelle); setCorrection(null);
+        showToast(nouvelle.statut === 'payee' ? 'Paiement corrigé : facture payée' : `Paiement corrigé : reste ${formatMoney(resteDu(nouvelle))}`);
+      };
       if (!data.factures.includes(f)) return null;
       return (
         <div className="card" style={{marginTop: 16}}>
@@ -1903,12 +1916,15 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               {liste.map((p, i) => (
                 <tr key={i}><td>{p.date ? formatDate(p.date) : 'sans date'}</td><td style={{textAlign: 'right'}}>{formatMoney(p.montant)}</td>
                   <td>{(MODES_PAIEMENT.find(([k]) => k === p.mode) || [, p.mode])[1]}</td><td>{p.ancien ? <span style={{color: 'var(--text-muted)'}}>paiement enregistré en une fois</span> : p.note}</td>
-                  <td>{!p.ancien && <button className="btn btn-icon btn-ghost delete" title="Retirer ce paiement" onClick={() => setRetrait(i)}>{Icons.trash}</button>}</td></tr>
+                  <td style={{whiteSpace: 'nowrap', textAlign: 'right'}}>{!p.ancien && <>
+                    <button className="btn btn-icon btn-ghost edit" title="Corriger ce paiement" onClick={() => setCorrection(i)}>{Icons.edit}</button>
+                    <button className="btn btn-icon btn-ghost delete" title="Retirer ce paiement" onClick={() => setRetrait(i)}>{Icons.trash}</button></>}</td></tr>
               ))}
             </tbody></table>
           )}
           {resteDu(f) > 0 && <div className="btn-group"><button className="btn btn-success" onClick={() => setAjout(true)}>Enregistrer un paiement</button></div>}
           {ajout && <PaiementModal facture={f} onConfirm={ajouter} onCancel={() => setAjout(false)} />}
+          {correction !== null && <PaiementModal facture={f} initial={liste[correction]} onConfirm={corriger} onCancel={() => setCorrection(null)} />}
           {retrait !== null && <ConfirmModal title="Retirer ce paiement ?" message={`Paiement de ${formatMoney(liste[retrait].montant)} du ${formatDate(liste[retrait].date)}. La facture redeviendra « envoyée » si elle n'est plus soldée.`} onConfirm={retirer} onCancel={() => setRetrait(null)} />}
         </div>
       );
