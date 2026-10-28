@@ -1,12 +1,12 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.25-1",
-  "notes": "Sécurité : factures reçues affichées sans risque, clé Super PDP chiffrée pour votre compte Windows, Facturier accessible seulement depuis sa propre fenêtre.\nFiabilité : retour automatique à la version précédente si une nouvelle version ne démarre pas, enregistrements et sauvegardes plus sûrs, import contrôlé (confirmation si l'IBAN ou le SIRET change).\nFactures : refus du client et rejet de la plateforme distingués (une facture rejetée se corrige et se renvoie), DRM avec une colonne Union européenne.\nAprès la mise à jour, si une fenêtre affiche seulement « Ouvrez le Facturier par son icône », fermez-la.\nAttention : revenir ensuite à une version plus ancienne fera perdre la connexion Super PDP (identifiant et secret à ressaisir dans Paramètres).",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.25-1.zip",
-  "sha256": "1cc9a7f9b51f8e3862155e2890b9b0b5a52d41a8e85b7b0391bf98b739ec7a7a",
-  "taille": 209503,
+  "version": "2026.10.28-1",
+  "notes": "Paiements en plusieurs fois : enregistrez chaque versement reçu (date, montant, mode). La facture affiche ce qui est réglé et le reste à payer, elle passe « Payée » quand tout est encaissé. Un paiement mal saisi se corrige avec le crayon ou se retire avec la corbeille, y compris sur les factures payées avant cette version.\nFactures : n° EA et n° d'accise dans le bloc du vigneron ; le champ s'appelle désormais « Transporteur ».\nSécurité et fiabilité (version du 25/10 incluse) : clé Super PDP chiffrée pour votre compte Windows, retour automatique à la version précédente si une nouvelle version ne démarre pas, sauvegardes plus sûres.\nAprès la mise à jour, si une fenêtre affiche seulement « Ouvrez le Facturier par son icône », fermez-la.\nAttention : revenir ensuite à une version plus ancienne fera perdre la connexion Super PDP (identifiant et secret à ressaisir dans Paramètres).",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.28-1.zip",
+  "sha256": "1f03737116e76cbb1517f1caeb90f5ad1ac9ab712f41850c3478ef28ef9f37d9",
+  "taille": 215203,
   "expire": "2027-10-28"
  },
- "signature": "19a892900c53c63ec23ad5ecac655a567fe1aebebba13a0ad56ed552123d0eac5099a48befe9518774637a9bde846fa05144a9a5377ddca6417d1866f2833805"
+ "signature": "f254d914edc6ef14ee101f3ce3a4278112b4b7c5f5929117761bc72647ca587481d07670617e39342e0600e79a429c8b98146ff9d8c85f17757db57138b4cd07"
 }
