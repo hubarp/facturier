@@ -123,6 +123,11 @@
     .status-select.envoyee { background: #dbeafe; }
     .status-select.payee { background: #dcfce7; }
     .status-select.enretard { background: #fed7d7; }
+    .status-select.partielle { background: #fef3c7; }
+    .reste-du { display: block; font-size: 11px; color: #b45309; margin-top: 2px; white-space: nowrap; }
+    .paiements-table td, .paiements-table th { font-size: 13px; padding: 6px 8px; }
+    .paiements-resume { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; margin: 4px 0 12px; }
+    .paiements-resume strong { font-size: 16px; }
     .ligne-produit { display: grid; grid-template-columns: 2fr 70px 110px 100px 40px; gap: 8px; margin-bottom: 10px; align-items: center; }
     .ligne-produit .prix-ligne { text-align: right; }
     .ligne-exceptionnelle { grid-column: 1 / 2; padding-left: 12px; border-left: 3px solid var(--primary-light); }
@@ -1201,8 +1206,28 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
 
     const formatMoney = (amount) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount || 0);
     const formatDate = (dateStr) => dateStr ? new Date(dateStr).toLocaleDateString('fr-FR') : '-';
-    const isOverdue = (f) => f.echeance && f.statut !== 'payee' && new Date(f.echeance) < new Date();
-    const getFactureStatut = (f) => f.statut === 'payee' ? 'payee' : isOverdue(f) ? 'enretard' : f.statut;
+    // ===== Paiements (une facture peut être réglée en plusieurs fois) =====
+    // f.paiements = [{ date, montant, mode, note }]. Une facture « payée » d'avant cette fonction compte comme un seul
+    // paiement de son total à sa date de paiement (rien n'est transformé dans les données).
+    const paiementsDe = (f) => Array.isArray(f.paiements) && f.paiements.length ? f.paiements
+      : (f.statut === 'payee' ? [{ date: f.datePaiement || '', montant: f.totalTTC, mode: f.reglement || '', ancien: true }] : []);
+    const dejaPaye = (f) => round2(paiementsDe(f).reduce((s, p) => s + (parseFloat(p.montant) || 0), 0));
+    const resteDu = (f) => f.statut === 'payee' ? 0 : Math.max(0, round2((parseFloat(f.totalTTC) || 0) - dejaPaye(f)));
+    const estPartielle = (f) => f.statut !== 'payee' && dejaPaye(f) > 0;
+    // Ajoute un paiement : la facture passe « payée » quand le total est atteint (date = celle du dernier versement)
+    const avecPaiement = (f, p) => {
+      const paiements = [...(Array.isArray(f.paiements) ? f.paiements : []), { date: p.date, montant: round2(parseFloat(p.montant)).toFixed(2), mode: p.mode || '', note: (p.note || '').trim() }];
+      const solde = round2(paiements.reduce((s, x) => s + (parseFloat(x.montant) || 0), 0)) >= round2(parseFloat(f.totalTTC) || 0) - 0.005;
+      return { ...f, paiements, statut: solde ? 'payee' : (f.statut === 'emise' ? 'envoyee' : f.statut), datePaiement: solde ? p.date : null };
+    };
+    const sansPaiement = (f, i) => {
+      const paiements = (f.paiements || []).filter((_, j) => j !== i);
+      const solde = paiements.length && round2(paiements.reduce((s, x) => s + (parseFloat(x.montant) || 0), 0)) >= round2(parseFloat(f.totalTTC) || 0) - 0.005;
+      return { ...f, paiements, statut: solde ? 'payee' : (f.statut === 'payee' ? 'envoyee' : f.statut), datePaiement: solde ? paiements[paiements.length - 1].date : null };
+    };
+    const MODES_PAIEMENT = [['virement', 'Virement'], ['chèque', 'Chèque'], ['espèces', 'Espèces'], ['carte', 'Carte bancaire'], ['autre', 'Autre']];
+    const isOverdue = (f) => f.echeance && f.statut !== 'payee' && resteDu(f) > 0 && new Date(f.echeance) < new Date();
+    const getFactureStatut = (f) => f.statut === 'payee' ? 'payee' : isOverdue(f) ? 'enretard' : estPartielle(f) ? 'partielle' : f.statut;
     // Une facture électronique déposée (directement ou à la main) ne se modifie ni ne se supprime plus
     const canEditFacture = factureModifiable;
     const canDeleteFacture = canEditFacture;
@@ -1546,9 +1571,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         facturesPayeesSansDate: data.factures.filter(f => f.statut === 'payee' && !f.datePaiement)
       };
       stats.totalAEnvoyer = stats.facturesAEnvoyer.reduce((s, f) => s + parseFloat(f.totalTTC || 0), 0);
-      stats.totalEnvoyees = stats.facturesEnvoyees.reduce((s, f) => s + parseFloat(f.totalTTC || 0), 0);
-      stats.totalEnRetard = stats.facturesEnRetard.reduce((s, f) => s + parseFloat(f.totalTTC || 0), 0);
-      stats.totalRentrees = stats.facturesPayees.reduce((s, f) => s + parseFloat(f.totalTTC || 0), 0);
+      // Montants encore dus (une facture réglée en partie ne compte que pour son reste) ; encaissements = tous les versements reçus
+      stats.totalEnvoyees = stats.facturesEnvoyees.reduce((s, f) => s + resteDu(f), 0);
+      stats.totalEnRetard = stats.facturesEnRetard.reduce((s, f) => s + resteDu(f), 0);
+      stats.totalRentrees = data.factures.reduce((s, f) => s + dejaPaye(f), 0);
+      stats.totalPayees = stats.facturesPayees.reduce((s, f) => s + parseFloat(f.totalTTC || 0), 0);
 
       const nbEnRetard = stats.facturesEnRetard.length;
 
@@ -1806,30 +1833,83 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       );
     }
 
-    function PaymentDateModal({ onConfirm, onCancel }) {
+    // Saisie d'un paiement (total ou partiel)
+    function PaiementModal({ facture, onConfirm, onCancel }) {
+      const reste = resteDu(facture);
       const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-      const [skip, setSkip] = useState(false);
+      const [montant, setMontant] = useState(reste.toFixed(2));
+      const [mode, setMode] = useState(MODES_PAIEMENT.some(([k]) => k === facture.reglement) ? facture.reglement : 'virement');
+      const [note, setNote] = useState('');
+      const [erreur, setErreur] = useState('');
+      const valider = () => {
+        const m = round2(parseFloat(String(montant).replace(',', '.')));
+        if (!date) { setErreur('Date du paiement manquante'); return; }
+        if (!(m > 0)) { setErreur('Montant manquant ou nul'); return; }
+        if (m > reste + 0.005) { setErreur(`Le montant dépasse le reste à payer (${formatMoney(reste)})`); return; }
+        onConfirm({ date, montant: m, mode, note });
+      };
+      const partiel = round2(parseFloat(String(montant).replace(',', '.')) || 0) < reste - 0.005;
       return (
         <div className="modal-overlay" onClick={onCancel}>
           <div className="modal small" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <div className="modal-title">Facture payée</div>
+              <div className="modal-title">Paiement reçu — {facture.numero}</div>
               <button className="close-btn" onClick={onCancel}>×</button>
             </div>
-            <p style={{marginBottom: 16, color: 'var(--text-muted)', fontSize: 14}}>Enregistrer la date de paiement ?</p>
-            <div className="form-group">
-              <label>Date de paiement</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={skip} />
+            <p style={{marginBottom: 12, color: 'var(--text-muted)', fontSize: 13}}>
+              Total {formatMoney(facture.totalTTC)}{dejaPaye(facture) > 0 && <> — déjà réglé {formatMoney(dejaPaye(facture))}</>} — reste à payer <strong>{formatMoney(reste)}</strong>
+            </p>
+            <div className="form-grid">
+              <div className="form-group"><label>Date du paiement</label><input type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
+              <div className="form-group"><label>Montant reçu (€)</label><input type="number" min="0" step="0.01" value={montant} onChange={e => setMontant(e.target.value)} /></div>
+              <div className="form-group"><label>Mode</label><select value={mode} onChange={e => setMode(e.target.value)}>{MODES_PAIEMENT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+              <div className="form-group"><label>Note</label><input value={note} placeholder="Facultatif : n° de chèque…" onChange={e => setNote(e.target.value)} /></div>
             </div>
-            <label style={{display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, cursor: 'pointer', fontSize: 13}}>
-              <input type="checkbox" checked={skip} onChange={e => setSkip(e.target.checked)} />
-              Ne pas saisir de date
-            </label>
-            <div className="btn-group" style={{marginTop: 20}}>
-              <button className="btn btn-success" onClick={() => onConfirm(skip ? null : date)}>Valider</button>
+            <p style={{fontSize: 12, color: partiel ? '#b45309' : 'var(--text-muted)', marginTop: 4}}>{partiel ? `Paiement partiel : il restera ${formatMoney(round2(reste - (parseFloat(String(montant).replace(',', '.')) || 0)))} à payer.` : 'La facture sera marquée payée.'}</p>
+            {erreur && <div className="vies vies-ko">{erreur}</div>}
+            <div className="btn-group" style={{marginTop: 16}}>
+              <button className="btn btn-success" onClick={valider}>Enregistrer le paiement</button>
               <button className="btn btn-outline" onClick={onCancel}>Annuler</button>
             </div>
           </div>
+        </div>
+      );
+    }
+
+    // Paiements d'une facture : historique, reste à payer, ajout et retrait
+    function CartePaiements({ facture, data, updateData, showToast }) {
+      const f = data.factures.find(x => x.numero === facture.numero) || facture;
+      const [ajout, setAjout] = useState(false);
+      const [retrait, setRetrait] = useState(null);
+      const liste = paiementsDe(f);
+      const majFacture = (nouvelle) => updateData({ factures: data.factures.map(x => x === f ? nouvelle : x) });
+      const ajouter = (p) => {
+        const nouvelle = avecPaiement(figerClient(f, data), p);
+        majFacture(nouvelle); setAjout(false);
+        showToast(nouvelle.statut === 'payee' ? 'Paiement enregistré : facture payée' : `Paiement enregistré : reste ${formatMoney(resteDu(nouvelle))}`);
+      };
+      const retirer = () => { majFacture(sansPaiement(f, retrait)); setRetrait(null); showToast('Paiement retiré'); };
+      if (!data.factures.includes(f)) return null;
+      return (
+        <div className="card" style={{marginTop: 16}}>
+          <div className="card-title">Paiements</div>
+          <div className="paiements-resume">
+            <span>Total : <strong>{formatMoney(f.totalTTC)}</strong></span>
+            <span>Réglé : <strong style={{color: 'var(--success)'}}>{formatMoney(dejaPaye(f))}</strong></span>
+            <span>Reste à payer : <strong style={{color: resteDu(f) > 0 ? '#b45309' : 'var(--success)'}}>{formatMoney(resteDu(f))}</strong></span>
+          </div>
+          {liste.length > 0 && (
+            <table className="paiements-table"><thead><tr><th>Date</th><th style={{textAlign: 'right'}}>Montant</th><th>Mode</th><th>Note</th><th></th></tr></thead><tbody>
+              {liste.map((p, i) => (
+                <tr key={i}><td>{p.date ? formatDate(p.date) : 'sans date'}</td><td style={{textAlign: 'right'}}>{formatMoney(p.montant)}</td>
+                  <td>{(MODES_PAIEMENT.find(([k]) => k === p.mode) || [, p.mode])[1]}</td><td>{p.ancien ? <span style={{color: 'var(--text-muted)'}}>paiement enregistré en une fois</span> : p.note}</td>
+                  <td>{!p.ancien && <button className="btn btn-icon btn-ghost delete" title="Retirer ce paiement" onClick={() => setRetrait(i)}>{Icons.trash}</button>}</td></tr>
+              ))}
+            </tbody></table>
+          )}
+          {resteDu(f) > 0 && <div className="btn-group"><button className="btn btn-success" onClick={() => setAjout(true)}>Enregistrer un paiement</button></div>}
+          {ajout && <PaiementModal facture={f} onConfirm={ajouter} onCancel={() => setAjout(false)} />}
+          {retrait !== null && <ConfirmModal title="Retirer ce paiement ?" message={`Paiement de ${formatMoney(liste[retrait].montant)} du ${formatDate(liste[retrait].date)}. La facture redeviendra « envoyée » si elle n'est plus soldée.`} onConfirm={retirer} onCancel={() => setRetrait(null)} />}
         </div>
       );
     }
@@ -2014,9 +2094,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const clientHeaders = ['Numéro', 'Type', 'Raison sociale / Nom', 'Enseigne', 'SIREN', 'N° TVA', 'Vérifié VIES', 'Adresse', 'CP', 'Ville', 'Pays', 'Tél', 'Email'];
         const clientRows = data.clients.map(c => { const v = viesAJour(c); return [c.numero, c.type, c.nom, c.enseigne || '', c.siren || '', c.tvaIntra || '', v ? `${v.valide ? 'valide' : 'invalide'} le ${dateFr(v.date)}${v.consultation ? ' (' + v.consultation + ')' : ''}` : '', c.adresse, c.codePostal, c.ville, c.pays, c.telephone || c.portable, c.email]; });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([clientHeaders, ...clientRows]), 'Clients');
-        const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement'];
-        const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, f.statut, f.echeance, f.datePaiement]);
+        const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement', 'Réglé', 'Reste à payer'];
+        const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, getFactureStatut(f), f.echeance, f.datePaiement, dejaPaye(f), resteDu(f)]);
+        const paieRows = data.factures.flatMap(f => paiementsDe(f).map(p => [f.numero, f.client?.nom, p.date, parseFloat(p.montant) || 0, p.mode, p.ancien ? '' : (p.note || '')]));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([factHeaders, ...factRows]), 'Factures');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Facture', 'Client', 'Date du paiement', 'Montant', 'Mode', 'Note'], ...paieRows]), 'Paiements');
         XLSX.writeFile(wb, `facturier_export_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.xlsx`);
         showToast('Export Excel généré');
       };
@@ -2037,20 +2119,21 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (newStatut === 'payee') {
           setPaymentModal(idx);
         } else {
+          if ((data.factures[idx].paiements || []).length && !confirm(`Effacer les ${data.factures[idx].paiements.length} paiement(s) enregistré(s) pour ${data.factures[idx].numero} ?`)) return;
           const updated = [...data.factures];
-          updated[idx] = { ...figerClient(updated[idx], data), statut: newStatut, datePaiement: null };
+          updated[idx] = { ...figerClient(updated[idx], data), statut: newStatut, datePaiement: null, paiements: [] };
           if (factureModifiable(updated[idx])) updated[idx] = sansVendeur(updated[idx]);
           updateData({ factures: updated });
           showToast('Statut mis à jour');
         }
       };
 
-      const confirmPayment = (datePaiement) => {
+      const confirmPayment = (p) => {
         const updated = [...data.factures];
-        updated[paymentModal] = { ...figerClient(updated[paymentModal], data), statut: 'payee', datePaiement };
+        updated[paymentModal] = avecPaiement(figerClient(updated[paymentModal], data), p);
         updateData({ factures: updated });
         setPaymentModal(null);
-        showToast('Facture marquée comme payée');
+        showToast(updated[paymentModal].statut === 'payee' ? 'Facture marquée comme payée' : `Paiement partiel enregistré : reste ${formatMoney(resteDu(updated[paymentModal]))}`);
       };
 
       const FactureList = ({ factures, showStatusSelect = true }) => (
@@ -2060,7 +2143,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               <div className="numero">{f.numero}</div>
               <div className="client">{nomAffiche(f.client) || '-'}</div>
               <div className="date">Éch: {formatDate(f.echeance)}</div>
-              <div className="amount">{formatMoney(f.totalTTC)}</div>
+              <div className="amount">{formatMoney(f.totalTTC)}{estPartielle(f) && <span className="reste-du">reste {formatMoney(resteDu(f))}</span>}</div>
               <div className="actions">
                 <button className="btn btn-icon btn-ghost view" title="Voir" onClick={() => setViewFacture(f)}>{Icons.eye}</button>
                 {showStatusSelect && (
@@ -2090,6 +2173,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               </div>
             </div>
             <FacturePreview facture={f} data={data} />
+            <CartePaiements facture={f} data={data} updateData={updateData} showToast={showToast} />
           </div>
         );
       }
@@ -2168,7 +2252,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             <div className="card" style={{borderLeft: '4px solid var(--success)'}}>
               <div className="section-header" onClick={() => setShowPayees(!showPayees)}>
                 <div className="card-title" style={{color: 'var(--success)', marginBottom: 0}}>
-                  ✅ Factures payées ({stats.facturesPayees.length}) - {formatMoney(stats.totalRentrees)}
+                  ✅ Factures payées ({stats.facturesPayees.length}) - {formatMoney(stats.totalPayees)}
                 </div>
                 <span className="toggle">{showPayees ? Icons.chevronUp : Icons.chevronDown}</span>
               </div>
@@ -2203,7 +2287,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             </div>
           )}
 
-          {paymentModal !== null && <PaymentDateModal onConfirm={confirmPayment} onCancel={() => setPaymentModal(null)} />}
+          {paymentModal !== null && data.factures[paymentModal] && <PaiementModal facture={data.factures[paymentModal]} onConfirm={confirmPayment} onCancel={() => setPaymentModal(null)} />}
         </div>
       );
     }
@@ -2362,20 +2446,21 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const changeStatut = (index, newStatut) => {
         if (newStatut === 'payee') setPaymentModal(index);
         else {
+          if ((data.factures[index].paiements || []).length && !confirm(`Effacer les ${data.factures[index].paiements.length} paiement(s) enregistré(s) pour ${data.factures[index].numero} ?`)) return;
           const updated = [...data.factures];
-          updated[index] = { ...figerClient(updated[index], data), statut: newStatut, datePaiement: null };
+          updated[index] = { ...figerClient(updated[index], data), statut: newStatut, datePaiement: null, paiements: [] };
           if (factureModifiable(updated[index])) updated[index] = sansVendeur(updated[index]);
           updateData({ factures: updated });
           showToast('Statut mis à jour');
         }
       };
 
-      const confirmPayment = (datePaiement) => {
+      const confirmPayment = (p) => {
         const updated = [...data.factures];
-        updated[paymentModal] = { ...figerClient(updated[paymentModal], data), statut: 'payee', datePaiement };
+        updated[paymentModal] = avecPaiement(figerClient(updated[paymentModal], data), p);
         updateData({ factures: updated });
         setPaymentModal(null);
-        showToast('Facture payée');
+        showToast(updated[paymentModal].statut === 'payee' ? 'Facture payée' : `Paiement partiel enregistré : reste ${formatMoney(resteDu(updated[paymentModal]))}`);
       };
 
       const deleteFacture = () => {
@@ -2420,6 +2505,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               </div>
             </div>
             <FacturePreview facture={f} data={data} />
+            <CartePaiements facture={f} data={data} updateData={updateData} showToast={showToast} />
           </div>
         );
       }
@@ -2616,6 +2702,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 <option value="envoyee">Envoyée</option>
                 <option value="payee">Payée</option>
                 <option value="enretard">En retard</option>
+                <option value="partielle">Payée en partie</option>
               </select>
             </div>
           </div>
@@ -2644,7 +2731,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                         <td className="ref-code">{f.numero}</td>
                         <td>{formatDate(f.date)}</td>
                         <td>{nomAffiche(f.client) || '-'}</td>
-                        <td>{formatMoney(f.totalTTC)}</td>
+                        <td>{formatMoney(f.totalTTC)}{tab === 'actives' && estPartielle(f) && <span className="reste-du">reste {formatMoney(resteDu(f))}</span>}</td>
                         <td>
                           {tab === 'actives' ? (
                             <>
@@ -2678,7 +2765,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               </table>
             </div>
           )}
-          {paymentModal !== null && <PaymentDateModal onConfirm={confirmPayment} onCancel={() => setPaymentModal(null)} />}
+          {paymentModal !== null && data.factures[paymentModal] && <PaiementModal facture={data.factures[paymentModal]} onConfirm={confirmPayment} onCancel={() => setPaymentModal(null)} />}
           {confirmDelete !== null && <ConfirmModal title="Supprimer ?" message="La facture sera déplacée vers la corbeille." onConfirm={deleteFacture} onCancel={() => setConfirmDelete(null)} />}
         </div>
       );
@@ -3455,9 +3542,11 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const clientHeaders = ['Numéro', 'Type', 'Raison sociale / Nom', 'Enseigne', 'SIREN', 'N° TVA', 'Vérifié VIES', 'Adresse', 'CP', 'Ville', 'Pays', 'Tél', 'Email'];
         const clientRows = data.clients.map(c => { const v = viesAJour(c); return [c.numero, c.type, c.nom, c.enseigne || '', c.siren || '', c.tvaIntra || '', v ? `${v.valide ? 'valide' : 'invalide'} le ${dateFr(v.date)}${v.consultation ? ' (' + v.consultation + ')' : ''}` : '', c.adresse, c.codePostal, c.ville, c.pays, c.telephone || c.portable, c.email]; });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([clientHeaders, ...clientRows]), 'Clients');
-        const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement'];
-        const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, f.statut, f.echeance, f.datePaiement]);
+        const factHeaders = ['Numéro', 'Date', 'Client', 'Total HT', 'TVA', 'Total TTC', 'Statut', 'Échéance', 'Date paiement', 'Réglé', 'Reste à payer'];
+        const factRows = data.factures.map(f => [f.numero, f.date, f.client?.nom, f.totalHT, f.totalTVA, f.totalTTC, getFactureStatut(f), f.echeance, f.datePaiement, dejaPaye(f), resteDu(f)]);
+        const paieRows = data.factures.flatMap(f => paiementsDe(f).map(p => [f.numero, f.client?.nom, p.date, parseFloat(p.montant) || 0, p.mode, p.ancien ? '' : (p.note || '')]));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([factHeaders, ...factRows]), 'Factures');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Facture', 'Client', 'Date du paiement', 'Montant', 'Mode', 'Note'], ...paieRows]), 'Paiements');
         XLSX.writeFile(wb, `facturier_export_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.xlsx`);
         showToast('Export Excel généré');
       };
