@@ -1,11 +1,12 @@
 {
  "contenu": {
   "app": "facturier",
-  "version": "2026.10.20-6",
-  "notes": "Nouveau : un seul fichier client pour toutes les entreprises (les fiches des deux entreprises sont regroupées au premier lancement, avec copie de sécurité).\nSécurité des données : une seule fenêtre active, aucun enregistrement ne peut en écraser un autre, reprise des modifications après une fermeture brutale, import de sauvegarde contrôlé.\nFactures : une facture envoyée se réimprime à l'identique ; numéros en double et factures déposées protégés.",
-  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.20-6.zip",
-  "sha256": "81f1bf56360c8dc7377db49b1f0365a36d342e8e2ee3d23a76e23b6102e36a9c",
-  "taille": 117703
+  "version": "2026.10.25-1",
+  "notes": "Sécurité : factures reçues affichées sans risque, clé Super PDP chiffrée pour votre compte Windows, Facturier accessible seulement depuis sa propre fenêtre.\nFiabilité : retour automatique à la version précédente si une nouvelle version ne démarre pas, enregistrements et sauvegardes plus sûrs, import contrôlé (confirmation si l'IBAN ou le SIRET change).\nFactures : refus du client et rejet de la plateforme distingués (une facture rejetée se corrige et se renvoie), DRM avec une colonne Union européenne.\nAprès la mise à jour, si une fenêtre affiche seulement « Ouvrez le Facturier par son icône », fermez-la.\nAttention : revenir ensuite à une version plus ancienne fera perdre la connexion Super PDP (identifiant et secret à ressaisir dans Paramètres).",
+  "url": "https://raw.githubusercontent.com/hubarp/facturier/main/versions/facturier-2026.10.25-1.zip",
+  "sha256": "1cc9a7f9b51f8e3862155e2890b9b0b5a52d41a8e85b7b0391bf98b739ec7a7a",
+  "taille": 209503,
+  "expire": "2027-10-28"
  },
- "signature": "48d88f8734fa866bb5c8f1cd592560d72fe06921d6c3ba23326669b488ac26a64aa66c85827339b3a12d48b8a02a9df8f0d8ff89982220ce06e66d0919d8e906"
+ "signature": "19a892900c53c63ec23ad5ecac655a567fe1aebebba13a0ad56ed552123d0eac5099a48befe9518774637a9bde846fa05144a9a5377ddca6417d1866f2833805"
 }
