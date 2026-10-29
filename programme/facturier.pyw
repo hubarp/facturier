@@ -39,7 +39,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "2026.10.28-1"
+VERSION = "2026.10.29-1"
 ICI = Path(__file__).resolve().parent                      # dossier « programme »
 # Réglages de test (autre serveur, autre clé de signature…) : pris en compte seulement si un fichier « MODE_TEST »
 # est posé à la main dans le dossier « programme ». Une mise à jour ne peut jamais livrer ce fichier (liste blanche).

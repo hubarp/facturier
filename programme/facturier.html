@@ -124,6 +124,15 @@
     .status-select.payee { background: #dcfce7; }
     .status-select.enretard { background: #fed7d7; }
     .status-select.partielle { background: #fef3c7; }
+    .stock-ligne { font-size: 12px; color: var(--text-muted); margin-left: auto; margin-right: 12px; white-space: nowrap; }
+    .stock-ligne.manque { color: var(--danger); font-weight: 600; }
+    .stock-bas td { background: var(--warning-light); }
+    .stock-vide td { background: #fdecec; }
+    .stock-nombre { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .stock-non-suivi { color: var(--text-muted); font-size: 12px; font-style: italic; }
+    .mvt-plus { color: var(--success); font-weight: 600; }
+    .mvt-moins { color: var(--danger); font-weight: 600; }
+    .inventaire-table input { width: 90px; text-align: right; }
     .reste-du { display: block; font-size: 11px; color: #b45309; margin-top: 2px; white-space: nowrap; }
     .paiements-table td, .paiements-table th { font-size: 13px; padding: 6px 8px; }
     .paiements-resume { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; margin: 4px 0 12px; }
@@ -421,6 +430,7 @@
       facturesSupprimes: [],
       cuvees: [],
       categorieDouanes: {},
+      mouvementsStock: [],
       options: { particulierTTC: true }
     };
 
@@ -1086,6 +1096,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const CLE_CACHE = ENTREPRISE === 'principale' ? 'facturier_data_v4' : `facturier_data_v4_${ENTREPRISE}`;
     // Enregistrement en attente forcé avant de quitter la page (changement d'entreprise, autre fenêtre)
     const ECRITURE = { maintenant: async () => {}, bloque: false, alerte: (m) => alert(m) };
+    // Fenêtre d'avis (blocage d'un envoi pour stock insuffisant…) : AVIS.ouvrir(titre, texte)
+    const AVIS = { ouvrir: (titre, texte) => alert(texte) };
     const changerEntreprise = async (id) => {
       try { await ECRITURE.maintenant(); }
       catch (e) { ECRITURE.alerte(`Vos dernières modifications n'ont pas pu être enregistrées (${e.message}) : changement d'entreprise annulé, réessayez dans un instant.`); return; }
@@ -1171,6 +1183,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       out.produits = (d.produits || []).map(migrerProduit);
       out.produitsSupprimes = (d.produitsSupprimes || []).map(migrerProduit);
       out.options = { particulierTTC: true, ...(d.options || {}) };
+      out.mouvementsStock = Array.isArray(d.mouvementsStock) ? d.mouvementsStock : [];
       const modeActuel = estSimple(d) ? 'simple' : 'complet';
       out.factures = out.factures.map(f => f.mode ? f : { ...f, mode: modeActuel });
       out.facturesSupprimes = out.facturesSupprimes.map(f => f.mode ? f : { ...f, mode: modeActuel });
@@ -1186,6 +1199,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       home: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>,
       chart: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
       file: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+      stock: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/><line x1="9" y1="11" x2="15" y2="11"/></svg>,
       box: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27,6.96 12,12.01 20.73,6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
       users: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>,
       settings: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
@@ -1238,6 +1252,82 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     const canEditFacture = factureModifiable;
     const canDeleteFacture = canEditFacture;
 
+    // ===== Stocks (bouteilles, par produit) =====
+    // data.mouvementsStock = [{ id, date, produitRef, type, quantite, ecart?, depart?, note, creeLe }]
+    //  - mise : mise en bouteille (+quantite) ; degustation / casse / perso : sortie hors facture (−quantite)
+    //  - inventaire : quantite = bouteilles comptées ; ecart = ce qu'il a fallu ajouter au stock calculé à ce moment
+    //    pour retomber sur le comptage (le premier inventaire d'un produit, « depart », sert de stock de départ)
+    // Les factures sortent les bouteilles quand elles sont envoyées (ou payées), jamais à l'état « émise » : rien n'est
+    // écrit dans les factures, le stock se recalcule toujours depuis les factures et les mouvements.
+    // Un produit sans aucun mouvement n'est pas suivi : pas de stock affiché, pas de blocage.
+    const TYPES_STOCK = {
+      mise: { label: 'Mise en bouteille', signe: 1 },
+      inventaire: { label: 'Inventaire', signe: 0 },
+      degustation: { label: 'Dégustation / échantillons', signe: -1 },
+      casse: { label: 'Casse / perte', signe: -1 },
+      perso: { label: 'Consommation perso / cadeaux', signe: -1 }
+    };
+    const SORTIES_HORS_FACTURE = ['degustation', 'casse', 'perso'];
+    const STATUTS_SORTIE_STOCK = ['envoyee', 'payee'];
+    const bouteilles = (q) => Math.round(parseFloat(q) || 0);
+    const mouvementsDe = (data) => Array.isArray(data.mouvementsStock) ? data.mouvementsStock : [];
+    const effetMouvement = (m) => m.type === 'inventaire' ? bouteilles(m.ecart) : (TYPES_STOCK[m.type] ? TYPES_STOCK[m.type].signe : 0) * bouteilles(m.quantite);
+    // Bouteilles d'une facture par produit (offertes comprises, produit exceptionnel exclu)
+    const bouteillesParProduit = (f) => {
+      const r = {};
+      (f.lignes || []).forEach(l => { if (l.produitRef && l.produitRef !== REF_EXCEPTIONNEL) r[l.produitRef] = (r[l.produitRef] || 0) + bouteilles(l.quantite); });
+      return r;
+    };
+    // { ref: { suivi, stock, reserve } } — reserve : bouteilles sur des factures pas encore envoyées
+    // sauf : numéro d'une facture à laisser de côté (celle qu'on modifie)
+    const calculerStocks = (data, sauf = null) => {
+      const r = {};
+      const ligne = (ref) => r[ref] || (r[ref] = { suivi: false, stock: 0, reserve: 0 });
+      mouvementsDe(data).forEach(m => { const x = ligne(m.produitRef); x.suivi = true; x.stock += effetMouvement(m); });
+      (data.factures || []).forEach(f => {
+        if (sauf && f.numero === sauf) return;
+        const parRef = bouteillesParProduit(f);
+        Object.keys(parRef).forEach(ref => {
+          if (STATUTS_SORTIE_STOCK.includes(f.statut)) ligne(ref).stock -= parRef[ref];
+          else if (f.statut === 'emise') ligne(ref).reserve += parRef[ref];
+        });
+      });
+      return r;
+    };
+    const nomProduitStock = (p, ref) => p ? [p.cuvee, p.millesime, p.contenance].filter(Boolean).join(' ') : ref;
+    // Produits suivis dont la facture demande plus de bouteilles que le stock (avant sa sortie)
+    const manqueStock = (data, f) => {
+      const stocks = calculerStocks(data, f.numero);
+      const parRef = bouteillesParProduit(f);
+      return Object.keys(parRef).filter(ref => stocks[ref] && stocks[ref].suivi && parRef[ref] > stocks[ref].stock)
+        .map(ref => ({ ref, nom: nomProduitStock(findProduitAnyState(data, ref), ref), demande: parRef[ref], stock: Math.max(0, stocks[ref].stock) }));
+    };
+    const texteManque = (manques) => 'Stock insuffisant : ' + manques.map(m => `${m.nom} (${m.demande} demandée${m.demande > 1 ? 's' : ''}, ${m.stock} en stock)`).join(' ; ')
+      + '. Si le stock est faux, corrigez-le dans Stocks (inventaire ou mise en bouteille).';
+    // La facture sort-elle du stock avec ce changement de statut ? Si oui et que le stock manque : message, sinon null
+    const blocageSortie = (data, f, nouveauStatut) =>
+      !STATUTS_SORTIE_STOCK.includes(f.statut) && STATUTS_SORTIE_STOCK.includes(nouveauStatut) && manqueStock(data, f).length ? texteManque(manqueStock(data, f)) : null;
+    // Export Excel : stock par produit et liste des mouvements saisis
+    const feuillesStock = (data) => {
+      if (estSimple(data)) return [];
+      const st = calculerStocks(data);
+      const prods = [...data.produits, ...(data.produitsSupprimes || []).filter(p => st[p.reference] && st[p.reference].suivi)].filter(p => p.reference !== REF_EXCEPTIONNEL);
+      const stock = prods.map(p => { const x = st[p.reference]; return [p.reference, p.cuvee, p.millesime, p.contenance, x && x.suivi ? x.stock : 'non suivi', x ? x.reserve : 0, bouteilles(p.seuilStock) || '', p.epuise ? 'oui' : '']; });
+      const mvts = mouvementsDe(data).map(m => { const p = findProduitAnyState(data, m.produitRef);
+        return [m.date, m.produitRef, nomProduitStock(p, m.produitRef), m.type === 'inventaire' ? (m.depart ? 'Stock de départ' : 'Inventaire') : (TYPES_STOCK[m.type] || { label: m.type }).label,
+          m.type === 'inventaire' ? '' : effetMouvement(m), m.type === 'inventaire' ? bouteilles(m.quantite) : '', m.type === 'inventaire' && !m.depart ? bouteilles(m.ecart) : '', m.note || '']; });
+      return [['Stocks', [['Réf.', 'Cuvée', 'Millésime', 'Contenance', 'En stock', 'Sur factures non envoyées', "Seuil d'alerte", 'Épuisé'], ...stock]],
+              ['Mouvements de stock', [['Date', 'Réf.', 'Produit', 'Mouvement', 'Bouteilles (+/−)', 'Comptées', 'Écart', 'Note'], ...mvts]]];
+    };
+    // Factures déjà sorties pour ce produit : un stock de départ les inclut (gardées pour l'historique, rien d'autre)
+    const facturesSorties = (data, ref) => (data.factures || []).filter(f => STATUTS_SORTIE_STOCK.includes(f.statut) && bouteillesParProduit(f)[ref]).map(f => f.numero);
+    const nouvelIdMouvement = () => 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // Après une modification des mouvements : un produit suivi ne doit jamais passer sous zéro
+    const stockNegatif = (data, mouvements) => {
+      const s = calculerStocks({ ...data, mouvementsStock: mouvements });
+      return Object.keys(s).filter(ref => s[ref].suivi && s[ref].stock < 0).map(ref => ({ ref, nom: nomProduitStock(findProduitAnyState(data, ref), ref), stock: s[ref].stock }));
+    };
+
     function App() {
       const [data, setData] = useState(() => {
         const saved = localStorage.getItem(CLE_CACHE);
@@ -1252,6 +1342,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         return INITIAL_DATA;
       });
       const [toast, setToast] = useState(null);
+      const [avis, setAvis] = useState(null);
+      const [aArchiver, setAArchiver] = useState([]);   // produits dont le stock vient de tomber à zéro
+      const minuterieToast = useRef(null);
       const [connexion, setConnexion] = useState({ etat: RELAIS ? 'chargement' : 'absent' });
       // Avec le programme local, les données vivent dans un fichier du dossier « donnees » (le navigateur n'en garde qu'une copie)
       const [pret, setPret] = useState(!RELAIS);
@@ -1548,7 +1641,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const masquerMaj = (v) => { setMajMasquee(v); try { sessionStorage.setItem('facturier_maj_masquee', v); } catch {} };
       const ctxConnexion = { ...connexion, rafraichir: rafraichirConnexion, actualiserSuivi, maj, rechercherMaj, installerMaj, revenirMaj };
 
-      const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+      const showToast = (msg) => { setToast(msg); clearTimeout(minuterieToast.current); minuterieToast.current = setTimeout(() => setToast(null), Math.min(12000, Math.max(3000, String(msg).length * 60))); };
+      AVIS.ouvrir = (titre, texte) => setAvis({ titre, texte });
       const updateData = (updates) => setData(prev => ({ ...prev, ...updates }));
 
       const getNextProduitRef = () => {
@@ -1584,6 +1678,31 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       stats.totalPayees = stats.facturesPayees.reduce((s, f) => s + parseFloat(f.totalTTC || 0), 0);
 
       const nbEnRetard = stats.facturesEnRetard.length;
+      // Stocks : produits en vente suivis sous leur seuil d'alerte (pastille du menu) ; un produit qui tombe à zéro
+      // pendant la session → proposition de l'archiver (marquer épuisé). Rien n'est proposé au chargement.
+      const stocks = useMemo(() => calculerStocks(data), [data.factures, data.mouvementsStock]);
+      const nbStockBas = estSimple(data) ? 0 : data.produits.filter(p => !p.epuise && stocks[p.reference] && stocks[p.reference].suivi
+        && (stocks[p.reference].stock <= 0 || (bouteilles(p.seuilStock) > 0 && stocks[p.reference].stock <= bouteilles(p.seuilStock)))).length;
+      const videsAvant = useRef(null);
+      useEffect(() => {
+        if (pret !== true || estSimple(data)) { videsAvant.current = null; return; }
+        const vides = data.produits.filter(p => !p.epuise && stocks[p.reference] && stocks[p.reference].suivi && stocks[p.reference].stock <= 0).map(p => p.reference);
+        const cle = ENTREPRISE;
+        if (videsAvant.current && videsAvant.current.cle === cle) {
+          const nouveaux = vides.filter(r => !videsAvant.current.refs.includes(r));
+          if (nouveaux.length) setAArchiver(prev => [...prev, ...nouveaux.filter(r => !prev.includes(r))]);
+          const basAvant = videsAvant.current.bas;
+          const bas = data.produits.filter(p => !p.epuise && stocks[p.reference] && stocks[p.reference].suivi && stocks[p.reference].stock > 0
+            && bouteilles(p.seuilStock) > 0 && stocks[p.reference].stock <= bouteilles(p.seuilStock) && !basAvant.includes(p.reference));
+          if (bas.length && !nouveaux.length) showToast(`Stock bas : ${bas.map(p => `${nomProduitStock(p)} (${stocks[p.reference].stock} bouteille${stocks[p.reference].stock > 1 ? 's' : ''})`).join(', ')}`);
+        }
+        videsAvant.current = { cle, refs: vides, bas: data.produits.filter(p => stocks[p.reference] && stocks[p.reference].suivi && bouteilles(p.seuilStock) > 0 && stocks[p.reference].stock <= bouteilles(p.seuilStock)).map(p => p.reference) };
+      }, [stocks, data.produits, pret]);
+      const archiverProduits = (refs) => {
+        updateData({ produits: data.produits.map(p => refs.includes(p.reference) ? { ...p, epuise: true } : p) });
+        setAArchiver([]);
+        showToast(refs.length > 1 ? 'Produits archivés : ils ne sont plus proposés dans les factures' : 'Produit archivé : il n\'est plus proposé dans les factures');
+      };
 
       return (
         <div className="app">
@@ -1600,6 +1719,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             <NavItem icon={Icons.chart} label="Suivi" active={page === 'suivi'} onClick={() => setPage('suivi')} badge={nbEnRetard > 0 ? nbEnRetard : null} />
             <NavItem icon={Icons.file} label="Factures" active={page === 'factures'} onClick={() => setPage('factures')} />
             {!estSimple(data) && <NavItem icon={Icons.box} label="Produits" active={page === 'produits'} onClick={() => setPage('produits')} />}
+            {!estSimple(data) && <NavItem icon={Icons.stock} label="Stocks" active={page === 'stocks'} onClick={() => setPage('stocks')} badge={nbStockBas > 0 ? nbStockBas : null} />}
             <NavItem icon={Icons.users} label="Clients" active={page === 'clients'} onClick={() => setPage('clients')} />
             <NavItem icon={Icons.settings} label="Paramètres" active={page === 'parametres'} onClick={() => setPage('parametres')} />
           </nav>
@@ -1647,12 +1767,38 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
             {page === 'suivi' && <PageSuivi data={data} stats={stats} setPage={setPage} updateData={updateData} showToast={showToast} />}
             {page === 'factures' && <PageFactures data={data} updateData={updateData} getNextNum={getNextFactureNum} showToast={showToast} />}
             {page === 'produits' && !estSimple(data) && <PageProduits data={data} updateData={updateData} getNextRef={getNextProduitRef} showToast={showToast} />}
+            {page === 'stocks' && !estSimple(data) && <PageStocks data={data} updateData={updateData} showToast={showToast} />}
             {page === 'clients' && <PageClients data={data} updateData={updateData} getNextNum={getNextClientNum} showToast={showToast} />}
             {page === 'parametres' && <PageParametres data={data} updateData={updateData} showToast={showToast} />}
             </>}
           </main>
           </EntrepriseCtx.Provider>
           </ConnexionCtx.Provider>
+          {avis && (
+            <div className="modal-overlay" onClick={() => setAvis(null)}><div className="modal small" onClick={e => e.stopPropagation()}>
+              <div className="modal-title" style={{marginBottom: 12}}>{avis.titre}</div>
+              <p style={{fontSize: 14, lineHeight: 1.5}}>{avis.texte}</p>
+              <div className="btn-group" style={{marginTop: 16}}>
+                {/Stock insuffisant/.test(avis.texte) && !estSimple(data) && <button className="btn btn-primary" onClick={() => { setAvis(null); setPage('stocks'); }}>Ouvrir les stocks</button>}
+                <button className="btn btn-outline" onClick={() => setAvis(null)}>Fermer</button>
+              </div>
+            </div></div>
+          )}
+          {aArchiver.length > 0 && !avis && (() => {
+            const prods = aArchiver.map(r => data.produits.find(p => p.reference === r)).filter(p => p && !p.epuise);
+            if (!prods.length) { setTimeout(() => setAArchiver([]), 0); return null; }
+            return (
+              <div className="modal-overlay"><div className="modal small">
+                <div className="modal-title" style={{marginBottom: 12}}>Stock épuisé : archiver {prods.length > 1 ? 'ces produits' : 'le produit'} ?</div>
+                <p style={{fontSize: 14, lineHeight: 1.5}}>Plus aucune bouteille en stock pour : <strong>{prods.map(p => nomProduitStock(p)).join(', ')}</strong>.</p>
+                <p style={{fontSize: 13, color: 'var(--text-muted)'}}>Archivé, le produit est marqué « épuisé » : il n'est plus proposé dans les nouvelles factures, son historique est conservé. Une nouvelle mise en bouteille le remet en vente.</p>
+                <div className="btn-group" style={{marginTop: 16}}>
+                  <button className="btn btn-primary" onClick={() => archiverProduits(prods.map(p => p.reference))}>Archiver</button>
+                  <button className="btn btn-outline" onClick={() => setAArchiver([])}>Plus tard</button>
+                </div>
+              </div></div>
+            );
+          })()}
           {toast && <div className="toast">{toast}</div>}
         </div>
       );
@@ -1924,7 +2070,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
               ))}
             </tbody></table>
           )}
-          {resteDu(f) > 0 && <div className="btn-group"><button className="btn btn-success" onClick={() => setAjout(true)}>Enregistrer un paiement</button></div>}
+          {resteDu(f) > 0 && <div className="btn-group"><button className="btn btn-success" onClick={() => { const b = blocageSortie(data, f, 'envoyee'); if (b) AVIS.ouvrir(`Paiement impossible : ${f.numero}`, b + ' Un paiement fait passer la facture « envoyée ».'); else setAjout(true); }}>Enregistrer un paiement</button></div>}
           {ajout && <PaiementModal facture={f} onConfirm={ajouter} onCancel={() => setAjout(false)} />}
           {correction !== null && <PaiementModal facture={f} initial={liste[correction]} onConfirm={corriger} onCancel={() => setCorrection(null)} />}
           {retrait !== null && <ConfirmModal title="Retirer ce paiement ?" message={`Paiement de ${formatMoney(liste[retrait].montant)}${liste[retrait].date ? ' du ' + formatDate(liste[retrait].date) : ''}. La facture redeviendra « envoyée » si elle n'est plus soldée.`} onConfirm={retirer} onCancel={() => setRetrait(null)} />}
@@ -1949,6 +2095,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const sirenCompte = (cx.entreprise && cx.entreprise.number) || '';
       const autreCompte = direct && !bacASable && sirenCompte && chiffres(data.entreprise.siret).slice(0, 9) !== sirenCompte;
       const pb = [...problemesFacturX(f, dataEnvoi, { bacASable }),
+        ...(f.statut === 'emise' && manqueStock(data, f).length ? [texteManque(manqueStock(data, f))] : []),
         ...(autreCompte ? [`Le compte Super PDP connecté (${cx.entreprise.formal_name || ''}, SIREN ${sirenCompte}) n'est pas celui de l'entreprise des Paramètres (SIRET ${data.entreprise.siret}) : vérifiez les identifiants`] : [])];
       const t = totauxFacture(f, data);
       const nomFichier = `${f.numero}_facture_electronique.pdf`;
@@ -2117,6 +2264,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const paieRows = data.factures.flatMap(f => paiementsDe(f).map(p => [f.numero, f.client?.nom, p.date, parseFloat(p.montant) || 0, p.mode, p.ancien ? '' : (p.note || '')]));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([factHeaders, ...factRows]), 'Factures');
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Facture', 'Client', 'Date du paiement', 'Montant', 'Mode', 'Note'], ...paieRows]), 'Paiements');
+        feuillesStock(data).forEach(([nom, lignes]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(lignes), nom));
         XLSX.writeFile(wb, `facturier_export_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.xlsx`);
         showToast('Export Excel généré');
       };
@@ -2134,6 +2282,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
       const changeStatut = (factureNumero, newStatut) => {
         const idx = data.factures.findIndex(f => f.numero === factureNumero);
         if (idx === -1) return;
+        const bloque = blocageSortie(data, data.factures[idx], newStatut);
+        if (bloque) { AVIS.ouvrir(`Envoi impossible : ${data.factures[idx].numero}`, bloque); return; }
         if (newStatut === 'payee') {
           setPaymentModal(idx);
         } else {
@@ -2448,20 +2598,24 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         if (Object.keys(errs).length) { showToast(messageErreurs(errs)); return; }
         const { vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles } = calculs();
         const facture = { ...form, remise: parseFloat(form.remise) || 0, mode: estSimple(data) ? 'simple' : 'complet', lignes: figerLignes(form, data), client: data.clients.find(c => c.numero === form.clientId), vinHT, remiseHT, transportHT, totalHT, totalTVA, totalTTC, nbBouteilles, updatedAt: new Date().toISOString() };
+        const manque = facture.statut === 'emise' ? manqueStock(data, facture) : [];
+        const suite = manque.length ? ` — attention, ${texteManque(manque).charAt(0).toLowerCase() + texteManque(manque).slice(1)} L'envoi restera bloqué tant que le stock manque.` : '';
         if (editIndex !== null) {
           const updated = [...data.factures]; updated[editIndex] = facture;
           updateData({ factures: updated });
-          showToast('Facture modifiée');
+          showToast('Facture modifiée' + suite);
         } else {
           facture.createdAt = new Date().toISOString();
           updateData({ factures: [...data.factures, facture] });
-          showToast('Facture créée');
+          showToast('Facture créée' + suite);
         }
         setCurrentFacture(facture);
         setMode('view');
       };
 
       const changeStatut = (index, newStatut) => {
+        const bloque = blocageSortie(data, data.factures[index], newStatut);
+        if (bloque) { AVIS.ouvrir(`Envoi impossible : ${data.factures[index].numero}`, bloque); return; }
         if (newStatut === 'payee') setPaymentModal(index);
         else {
           if ((data.factures[index].paiements || []).length && !confirm(`Effacer les ${data.factures[index].paiements.length} paiement(s) enregistré(s) pour ${data.factures[index].numero} ?`)) return;
@@ -2588,6 +2742,9 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                 </div>
               ))}
               {!simple && form.lignes.map((l, i) => {
+                const stocksForm = calculerStocks(data, editIndex !== null && data.factures[editIndex] ? data.factures[editIndex].numero : null);
+                const st = l.produitRef ? stocksForm[l.produitRef] : null;
+                const demandeRef = l.produitRef ? (bouteillesParProduit(form)[l.produitRef] || 0) : 0;
                 const exceptionnel = estExceptionnel(l);
                 const produit = data.produits.find(x => x.reference === l.produitRef);
                 const horsCatalogue = l.produitRef && !exceptionnel && !produit;
@@ -2622,6 +2779,8 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
                             : l.repli ? `Pas de tarif ${nomType[l.repli]} pour ce produit : prix pro appliqué`
                             : l.tarif ? <>{libTarif[l.tarif]}{l.ttc !== undefined && <> ({Number(l.ttc).toFixed(2)} € TTC)</>}</> : ''}
                         </span>
+                        {st && st.suivi && <span className={`stock-ligne ${demandeRef > st.stock ? 'manque' : ''}`} title="Bouteilles en stock (les factures non envoyées ne sont pas encore déduites)">
+                          {demandeRef > st.stock ? `Stock insuffisant : ${Math.max(0, st.stock)} en stock` : `${st.stock} en stock`}{st.reserve > 0 && ` · ${st.reserve} sur d'autres factures non envoyées`}</span>}
                         <label><input type="checkbox" checked={!!l.offerte} onChange={e => updateLigne(i, 'offerte', e.target.checked)} /> Offerte</label>
                       </div>
                     )}
@@ -3252,6 +3411,263 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
     }
 
     // Page Clients
+    // ===== Page Stocks =====
+    const aujourdhui = () => new Date().toISOString().split('T')[0];
+    const entierPositif = (v, zeroOk = false) => { const t = String(v ?? '').trim(); if (!/^\d+$/.test(t)) return null; const n = parseInt(t, 10); return n > 0 || (zeroOk && n === 0) ? n : null; };
+
+    function PageStocks({ data, updateData, showToast }) {
+      const [tab, setTab] = useState('vente');
+      const [search, setSearch] = useState('');
+      const [mvt, setMvt] = useState(null);           // saisie ou correction d'un mouvement
+      const [inventaire, setInventaire] = useState(null);
+      const [fiche, setFiche] = useState(null);       // référence du produit dont on regarde l'historique
+      const [suppr, setSuppr] = useState(null);       // id du mouvement à supprimer
+      const stocks = calculerStocks(data);
+      const mouvements = mouvementsDe(data);
+      const produits = data.produits.filter(p => p.reference !== REF_EXCEPTIONNEL);
+      const prodDe = (ref) => findProduitAnyState(data, ref);
+      const st = (ref) => stocks[ref] || { suivi: false, stock: 0, reserve: 0 };
+      const seuil = (p) => bouteilles(p && p.seuilStock);
+      const nbSuivis = produits.filter(p => st(p.reference).suivi).length;
+      const nbEpuises = produits.filter(p => p.epuise).length;
+      const s = search.toLowerCase();
+      const liste = produits.filter(p => (tab === 'vente' ? !p.epuise : p.epuise)
+        && (!s || p.reference.toLowerCase().includes(s) || p.cuvee.toLowerCase().includes(s) || String(p.millesime || '').includes(s)));
+
+      // Enregistre une nouvelle liste de mouvements si aucun produit suivi ne passe sous zéro
+      const enregistrer = (nouveaux, extra = {}, message = '') => {
+        const neg = stockNegatif({ ...data, ...extra }, nouveaux);
+        if (neg.length) { AVIS.ouvrir('Stock insuffisant', `Impossible : le stock deviendrait négatif pour ${neg.map(n => `${n.nom} (${n.stock})`).join(', ')}. Vérifiez les quantités, ou faites d'abord un inventaire.`); return false; }
+        updateData({ mouvementsStock: nouveaux, ...extra });
+        if (message) showToast(message);
+        return true;
+      };
+
+      const ouvrirMvt = (type, ref = '') => setMvt({ type, produitRef: ref, date: aujourdhui(), quantite: '', note: '', remettre: true, erreur: '' });
+      const corriger = (m) => setMvt({ ...m, quantite: String(m.quantite), editId: m.id, erreur: '' });
+      const validerMvt = () => {
+        const inv = mvt.type === 'inventaire';
+        const q = entierPositif(mvt.quantite, inv);
+        if (!mvt.produitRef) return setMvt({ ...mvt, erreur: 'Choisissez un produit' });
+        if (!mvt.date) return setMvt({ ...mvt, erreur: 'Date manquante' });
+        if (q === null) return setMvt({ ...mvt, erreur: inv ? 'Nombre de bouteilles comptées : un nombre entier (0 accepté)' : 'Nombre de bouteilles : un nombre entier supérieur à 0' });
+        const p = prodDe(mvt.produitRef);
+        const note = (mvt.note || '').trim();
+        if (mvt.editId) {
+          const ancien = mouvements.find(m => m.id === mvt.editId);
+          if (!ancien) return setMvt(null);
+          const corrige = inv ? { ...ancien, date: mvt.date, quantite: q, ecart: bouteilles(ancien.ecart) + (q - bouteilles(ancien.quantite)), note }
+                              : { ...ancien, date: mvt.date, quantite: q, note, type: mvt.type };
+          if (enregistrer(mouvements.map(m => m.id === ancien.id ? corrige : m), {}, 'Mouvement corrigé')) setMvt(null);
+          return;
+        }
+        const nouveaux = [...mouvements];
+        const base = { date: mvt.date, produitRef: mvt.produitRef, note, creeLe: new Date().toISOString() };
+        if (inv) {
+          const avant = st(mvt.produitRef);
+          nouveaux.push({ ...base, id: nouvelIdMouvement(), type: 'inventaire', quantite: q, ecart: q - avant.stock, ...(avant.suivi ? {} : { depart: true, avant: facturesSorties(data, mvt.produitRef) }) });
+        } else {
+          // Premier mouvement d'un produit jamais compté : le stock d'avant cette mise en bouteille compte pour 0
+          if (mvt.type === 'mise' && !st(mvt.produitRef).suivi)
+            nouveaux.push({ ...base, id: nouvelIdMouvement(), type: 'inventaire', quantite: 0, ecart: -st(mvt.produitRef).stock, depart: true, avant: facturesSorties(data, mvt.produitRef), note: 'Stock avant la première mise en bouteille' });
+          nouveaux.push({ ...base, id: nouvelIdMouvement(), type: mvt.type, quantite: q });
+        }
+        const remettre = mvt.type === 'mise' && p && p.epuise && mvt.remettre;
+        const extra = remettre ? { produits: data.produits.map(x => x.reference === p.reference ? { ...x, epuise: false } : x) } : {};
+        const msg = mvt.type === 'mise' ? `Mise en bouteille enregistrée : ${q} bouteille${q > 1 ? 's' : ''}${remettre ? ' — produit remis en vente' : ''}`
+          : inv ? 'Inventaire enregistré' : `Sortie enregistrée : ${q} bouteille${q > 1 ? 's' : ''}`;
+        if (enregistrer(nouveaux, extra, msg)) setMvt(null);
+      };
+
+      const ouvrirInventaire = () => setInventaire({ date: aujourdhui(), comptes: {}, voirEpuises: false, note: '', erreur: '' });
+      const validerInventaire = () => {
+        const saisis = Object.entries(inventaire.comptes).filter(([, v]) => String(v).trim() !== '');
+        if (!inventaire.date) return setInventaire({ ...inventaire, erreur: 'Date manquante' });
+        if (!saisis.length) return setInventaire({ ...inventaire, erreur: 'Saisissez au moins un comptage' });
+        const faux = saisis.filter(([, v]) => entierPositif(v, true) === null).map(([r]) => nomProduitStock(prodDe(r), r));
+        if (faux.length) return setInventaire({ ...inventaire, erreur: `Nombre entier attendu (0 accepté) pour : ${faux.join(', ')}` });
+        const creeLe = new Date().toISOString(), note = (inventaire.note || '').trim();
+        const nouveaux = [...mouvements, ...saisis.map(([ref, v]) => { const q = entierPositif(v, true), avant = st(ref);
+          return { id: nouvelIdMouvement(), date: inventaire.date, produitRef: ref, type: 'inventaire', quantite: q, ecart: q - avant.stock, ...(avant.suivi ? {} : { depart: true, avant: facturesSorties(data, ref) }), note, creeLe }; })];
+        if (enregistrer(nouveaux, {}, `Inventaire enregistré : ${saisis.length} produit${saisis.length > 1 ? 's' : ''}`)) setInventaire(null);
+      };
+
+      const supprimer = () => {
+        if (enregistrer(mouvements.filter(m => m.id !== suppr), {}, 'Mouvement supprimé')) setSuppr(null);
+        else setSuppr(null);
+      };
+      const enregistrerSeuil = (ref, v) => {
+        const t = String(v).trim();
+        if (t !== '' && entierPositif(t, true) === null) { showToast('Seuil : un nombre entier de bouteilles'); return; }
+        updateData({ produits: data.produits.map(p => p.reference === ref ? { ...p, seuilStock: t === '' ? '' : entierPositif(t, true) } : p) });
+        showToast(t === '' || t === '0' ? 'Seuil d\'alerte retiré' : `Seuil d'alerte : ${t} bouteilles`);
+      };
+
+      const historique = (ref) => {
+        const lignes = mouvements.filter(m => m.produitRef === ref).map(m => ({ cle: m.id, date: m.date, tri: m.creeLe || '', m }));
+        // Les factures sorties avant le stock de départ sont comprises dans ce comptage : pas répétées
+        const comprises = new Set(mouvements.filter(m => m.produitRef === ref && m.depart).flatMap(m => m.avant || []));
+        (data.factures || []).forEach(f => { const n = bouteillesParProduit(f)[ref]; if (n && f.statut !== 'emise' && !comprises.has(f.numero)) lignes.push({ cle: 'f' + f.numero, date: f.date, tri: f.updatedAt || f.createdAt || '', f, n }); });
+        return lignes.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.tri || '').localeCompare(a.tri || ''));
+      };
+      const enAttente = (ref) => (data.factures || []).filter(f => f.statut === 'emise' && bouteillesParProduit(f)[ref]);
+
+      const classeLigne = (p) => { const x = st(p.reference); if (!x.suivi || p.epuise) return ''; if (x.stock <= 0) return 'stock-vide'; return seuil(p) > 0 && x.stock <= seuil(p) ? 'stock-bas' : ''; };
+      const choixProduits = (type) => produits.filter(p => type === 'mise' || type === 'inventaire' ? true : st(p.reference).suivi)
+        .sort((a, b) => (a.epuise - b.epuise) || a.reference.localeCompare(b.reference));
+
+      return (
+        <div>
+          <div className="page-header"><h1 className="page-title">Stocks</h1>
+            <div className="btn-group" style={{marginTop: 0}}>
+              <button className="btn btn-primary" onClick={() => ouvrirMvt('mise')}>{Icons.plus} Mise en bouteille</button>
+              <button className="btn btn-outline" onClick={() => ouvrirMvt('degustation')}>Sortie hors facture</button>
+              <button className="btn btn-outline" onClick={ouvrirInventaire}>Inventaire</button>
+            </div>
+          </div>
+          {nbSuivis === 0 && (
+            <div className="card alerte-info" style={{marginBottom: 16}}>
+              <strong>Pour commencer : un inventaire.</strong> Comptez les bouteilles de chaque produit et saisissez-les avec le bouton « Inventaire ».
+              Ensuite, le stock baisse tout seul quand une facture est envoyée (ou payée), et monte avec chaque mise en bouteille.
+              Tant qu'un produit n'a pas de stock saisi, il n'est pas suivi : rien n'est bloqué pour lui.
+            </div>
+          )}
+          <div className="tabs">
+            <button className={`tab ${tab === 'vente' ? 'active' : ''}`} onClick={() => setTab('vente')}>En vente ({produits.length - nbEpuises})</button>
+            <button className={`tab ${tab === 'epuises' ? 'active' : ''}`} onClick={() => setTab('epuises')}>Archivés / épuisés ({nbEpuises})</button>
+          </div>
+          <div className="search-bar"><input placeholder="Rechercher une cuvée, un millésime, une référence…" value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <div className="card" style={{padding: 0, overflow: 'hidden'}}>
+            <table>
+              <thead><tr><th>Réf.</th><th>Produit</th><th style={{textAlign: 'right'}}>En stock</th><th style={{textAlign: 'right'}} title="Bouteilles sur des factures émises, pas encore envoyées : elles sortiront du stock à l'envoi">Sur factures non envoyées</th><th style={{textAlign: 'right'}}>Seuil d'alerte</th><th style={{width: 150}}>Actions</th></tr></thead>
+              <tbody>
+                {liste.length === 0 ? <tr><td colSpan="6" style={{textAlign: 'center', padding: 40}}>Aucun produit</td></tr> : liste.map(p => {
+                  const x = st(p.reference);
+                  return (
+                    <tr key={p.reference} className={classeLigne(p)}>
+                      <td className="ref-code">{p.reference}</td>
+                      <td>{nomProduitStock(p)}{x.suivi && !p.epuise && x.stock <= 0 && <span className="badge-epuise">plus de stock</span>}</td>
+                      <td className="stock-nombre">{x.suivi ? <strong>{x.stock}</strong> : <span className="stock-non-suivi">non suivi</span>}</td>
+                      <td className="stock-nombre">{x.reserve || ''}</td>
+                      <td className="stock-nombre">{seuil(p) || ''}</td>
+                      <td><div className="actions-cell">
+                        <button className="btn btn-icon btn-ghost" title="Historique et seuil d'alerte" onClick={() => setFiche(p.reference)}>{Icons.eye}</button>
+                        <button className="btn btn-icon btn-ghost" title="Mise en bouteille" onClick={() => ouvrirMvt('mise', p.reference)}>{Icons.plus}</button>
+                        {x.suivi && <button className="btn btn-icon btn-ghost" title="Sortie hors facture" onClick={() => ouvrirMvt('degustation', p.reference)}>−</button>}
+                        {x.suivi && !p.epuise && x.stock <= 0 && <button className="btn btn-icon btn-ghost" title="Archiver (marquer épuisé)" onClick={() => { updateData({ produits: data.produits.map(y => y.reference === p.reference ? { ...y, epuise: true } : y) }); showToast('Produit archivé'); }}>⦸</button>}
+                      </div></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p style={{fontSize: 12, color: 'var(--text-muted)', marginTop: 10}}>Les bouteilles sortent du stock quand la facture est envoyée (ou payée). Une facture qui demande plus que le stock ne peut pas être envoyée. Les bouteilles offertes comptent.</p>
+
+          {inventaire && (
+            <div className="modal-overlay" onClick={() => setInventaire(null)}><div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header"><div className="modal-title">Inventaire</div><button className="close-btn" onClick={() => setInventaire(null)}>×</button></div>
+              <p style={{fontSize: 13, color: 'var(--text-muted)', marginBottom: 12}}>Saisissez les bouteilles comptées. Le stock de chaque produit compté est remis à ce nombre (l'écart avec le stock calculé est gardé dans l'historique). Laissez vide un produit non compté.</p>
+              <div className="form-grid">
+                <div className="form-group"><label>Date du comptage</label><input type="date" value={inventaire.date} onChange={e => setInventaire({ ...inventaire, date: e.target.value })} /></div>
+                <div className="form-group"><label>Note</label><input value={inventaire.note} placeholder="Facultatif" onChange={e => setInventaire({ ...inventaire, note: e.target.value })} /></div>
+              </div>
+              {nbEpuises > 0 && <label style={{display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, margin: '4px 0 8px'}}><input type="checkbox" checked={inventaire.voirEpuises} onChange={e => setInventaire({ ...inventaire, voirEpuises: e.target.checked })} /> Afficher aussi les produits archivés ({nbEpuises})</label>}
+              <div style={{maxHeight: '45vh', overflowY: 'auto'}}>
+                <table className="inventaire-table">
+                  <thead><tr><th>Réf.</th><th>Produit</th><th style={{textAlign: 'right'}}>Stock calculé</th><th style={{textAlign: 'right'}}>Compté</th></tr></thead>
+                  <tbody>{produits.filter(p => inventaire.voirEpuises || !p.epuise).map(p => { const x = st(p.reference); return (
+                    <tr key={p.reference}><td className="ref-code">{p.reference}</td><td>{nomProduitStock(p)}</td>
+                      <td className="stock-nombre">{x.suivi ? x.stock : <span className="stock-non-suivi">non suivi</span>}</td>
+                      <td style={{textAlign: 'right'}}><input type="number" min="0" step="1" value={inventaire.comptes[p.reference] ?? ''} onChange={e => setInventaire({ ...inventaire, comptes: { ...inventaire.comptes, [p.reference]: e.target.value } })} /></td></tr>); })}</tbody>
+                </table>
+              </div>
+              {inventaire.erreur && <div className="vies vies-ko">{inventaire.erreur}</div>}
+              <div className="btn-group" style={{marginTop: 16}}>
+                <button className="btn btn-primary" onClick={validerInventaire}>Enregistrer l'inventaire</button>
+                <button className="btn btn-outline" onClick={() => setInventaire(null)}>Annuler</button>
+              </div>
+            </div></div>
+          )}
+
+          {fiche && (() => {
+            const p = prodDe(fiche), x = st(fiche), h = historique(fiche), att = enAttente(fiche);
+            return (
+              <div className="modal-overlay" onClick={() => setFiche(null)}><div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header"><div className="modal-title">{fiche} — {nomProduitStock(p, fiche)}</div><button className="close-btn" onClick={() => setFiche(null)}>×</button></div>
+                <div className="paiements-resume">
+                  <span>En stock : <strong>{x.suivi ? x.stock : 'non suivi'}</strong></span>
+                  {x.reserve > 0 && <span>Sur factures non envoyées : <strong>{x.reserve}</strong> ({att.map(f => f.numero).join(', ')})</span>}
+                  <span style={{display: 'flex', alignItems: 'center', gap: 8}}>Seuil d'alerte :
+                    <input key={fiche + String(p && p.seuilStock)} type="number" min="0" step="1" defaultValue={p && p.seuilStock !== undefined ? p.seuilStock : ''} style={{width: 80}} placeholder="aucun"
+                      onBlur={e => { if (String(e.target.value) !== String((p && p.seuilStock) ?? '')) enregistrerSeuil(fiche, e.target.value); }} /> bouteilles</span>
+                </div>
+                {!x.suivi ? <p style={{fontSize: 13, color: 'var(--text-muted)'}}>Ce produit n'est pas encore suivi : faites un inventaire (ou une mise en bouteille) pour commencer.</p> : (
+                  <div style={{maxHeight: '50vh', overflowY: 'auto'}}>
+                    <table className="paiements-table"><thead><tr><th>Date</th><th>Mouvement</th><th style={{textAlign: 'right'}}>Bouteilles</th><th>Détail</th><th></th></tr></thead><tbody>
+                      {h.map(l => l.f ? (
+                        <tr key={l.cle}><td>{formatDate(l.date)}</td><td>Facture {l.f.numero}</td><td className="stock-nombre mvt-moins">−{l.n}</td><td>{nomAffiche(l.f.client) || ''}</td><td></td></tr>
+                      ) : (
+                        <tr key={l.cle}><td>{formatDate(l.date)}</td>
+                          <td>{l.m.type === 'inventaire' ? (l.m.depart ? 'Stock de départ' : 'Inventaire') : (TYPES_STOCK[l.m.type] || { label: l.m.type }).label}</td>
+                          <td className={`stock-nombre ${effetMouvement(l.m) > 0 && l.m.type !== 'inventaire' ? 'mvt-plus' : l.m.type !== 'inventaire' ? 'mvt-moins' : ''}`}>
+                            {l.m.type === 'inventaire' ? `${l.m.quantite} comptée${l.m.quantite > 1 ? 's' : ''}` : `${effetMouvement(l.m) > 0 ? '+' : '−'}${bouteilles(l.m.quantite)}`}</td>
+                          <td>{[l.m.type === 'inventaire' && !l.m.depart ? (bouteilles(l.m.ecart) === 0 ? 'aucun écart' : `écart ${bouteilles(l.m.ecart) > 0 ? '+' : ''}${bouteilles(l.m.ecart)}`) : '', l.m.note].filter(Boolean).join(' — ')}</td>
+                          <td style={{whiteSpace: 'nowrap', textAlign: 'right'}}>
+                            <button className="btn btn-icon btn-ghost edit" title="Corriger" onClick={() => corriger(l.m)}>{Icons.edit}</button>
+                            <button className="btn btn-icon btn-ghost delete" title="Supprimer" onClick={() => setSuppr(l.m.id)}>{Icons.trash}</button></td></tr>
+                      ))}
+                    </tbody></table>
+                  </div>
+                )}
+                <div className="btn-group" style={{marginTop: 16}}>
+                  <button className="btn btn-primary" onClick={() => ouvrirMvt('mise', fiche)}>Mise en bouteille</button>
+                  {x.suivi && <button className="btn btn-outline" onClick={() => ouvrirMvt('degustation', fiche)}>Sortie hors facture</button>}
+                  <button className="btn btn-outline" onClick={() => setMvt({ type: 'inventaire', produitRef: fiche, date: aujourdhui(), quantite: '', note: '', erreur: '' })}>Compter (inventaire)</button>
+                </div>
+              </div></div>
+            );
+          })()}
+          {mvt && (() => {
+            const inv = mvt.type === 'inventaire', sortie = SORTIES_HORS_FACTURE.includes(mvt.type);
+            const p = mvt.produitRef ? prodDe(mvt.produitRef) : null, x = mvt.produitRef ? st(mvt.produitRef) : null;
+            const titre = mvt.editId ? `Corriger : ${TYPES_STOCK[mvt.type].label.toLowerCase()}` : mvt.type === 'mise' ? 'Mise en bouteille' : inv ? 'Inventaire' : 'Sortie hors facture';
+            return (
+              <div className="modal-overlay" onClick={() => setMvt(null)}><div className="modal small" onClick={e => e.stopPropagation()}>
+                <div className="modal-header"><div className="modal-title">{titre}</div><button className="close-btn" onClick={() => setMvt(null)}>×</button></div>
+                <div className="form-grid">
+                  {sortie && <div className="form-group full"><label>Motif</label><select value={mvt.type} onChange={e => setMvt({ ...mvt, type: e.target.value })}>{SORTIES_HORS_FACTURE.map(t => <option key={t} value={t}>{TYPES_STOCK[t].label}</option>)}</select></div>}
+                  <div className="form-group full"><label>Produit</label>
+                    <select value={mvt.produitRef} disabled={!!mvt.editId} onChange={e => setMvt({ ...mvt, produitRef: e.target.value })}>
+                      <option value="">-- Produit --</option>
+                      {mvt.editId && p && !choixProduits(mvt.type).includes(p) && <option value={p.reference}>{p.reference} - {nomProduitStock(p)}</option>}
+                      {choixProduits(mvt.type).map(q => <option key={q.reference} value={q.reference}>{q.reference} - {nomProduitStock(q)}{q.epuise ? ' (épuisé)' : ''}{st(q.reference).suivi ? ` — ${st(q.reference).stock} en stock` : ''}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group"><label>Date</label><input type="date" value={mvt.date} onChange={e => setMvt({ ...mvt, date: e.target.value })} /></div>
+                  <div className="form-group"><label>{inv ? 'Bouteilles comptées' : 'Bouteilles'}</label><input type="number" min={inv ? 0 : 1} step="1" value={mvt.quantite} onChange={e => setMvt({ ...mvt, quantite: e.target.value })} autoFocus /></div>
+                  <div className="form-group full"><label>Note</label><input value={mvt.note || ''} placeholder={mvt.type === 'mise' ? 'Facultatif : n° de lot, cuve…' : sortie ? 'Facultatif : salon, client…' : 'Facultatif'} onChange={e => setMvt({ ...mvt, note: e.target.value })} /></div>
+                </div>
+                {x && !mvt.editId && <p style={{fontSize: 13, color: 'var(--text-muted)', marginTop: 4}}>
+                  {x.suivi ? `Stock actuel : ${x.stock} bouteille${x.stock > 1 ? 's' : ''}.` : mvt.type === 'mise' ? 'Premier mouvement de ce produit : le stock d\'avant cette mise en bouteille compte pour 0. S\'il reste des bouteilles plus anciennes, faites plutôt un inventaire.' : 'Ce produit n\'est pas encore suivi : ce comptage sera son stock de départ.'}
+                </p>}
+                {mvt.type === 'mise' && p && p.epuise && !mvt.editId && <label style={{display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginTop: 8}}><input type="checkbox" checked={mvt.remettre} onChange={e => setMvt({ ...mvt, remettre: e.target.checked })} /> Remettre ce produit en vente</label>}
+                {mvt.erreur && <div className="vies vies-ko">{mvt.erreur}</div>}
+                <div className="btn-group" style={{marginTop: 16}}>
+                  <button className="btn btn-primary" onClick={validerMvt}>Enregistrer</button>
+                  <button className="btn btn-outline" onClick={() => setMvt(null)}>Annuler</button>
+                </div>
+              </div></div>
+            );
+          })()}
+
+          {suppr && (() => { const m = mouvements.find(y => y.id === suppr); return m ? (
+            <ConfirmModal title="Supprimer ce mouvement ?" message={`${m.type === 'inventaire' ? (m.depart ? 'Stock de départ' : 'Inventaire') : TYPES_STOCK[m.type].label} du ${formatDate(m.date)} (${m.quantite} bouteille${m.quantite > 1 ? 's' : ''}). ${mouvements.some(y => y.id !== m.id && y.produitRef === m.produitRef) ? 'Le stock sera recalculé.' : 'C\'est le seul mouvement de ce produit : il ne sera plus suivi (ni stock affiché, ni blocage).'}`} onConfirm={supprimer} onCancel={() => setSuppr(null)} />
+          ) : null; })()}
+        </div>
+      );
+    }
+
     function PageClients({ data, updateData, getNextNum, showToast }) {
       const [tab, setTab] = useState('actifs');
       const [search, setSearch] = useState('');
@@ -3565,6 +3981,7 @@ ${[['DocumentFileName', 'The name of the embedded XML document'], ['DocumentType
         const paieRows = data.factures.flatMap(f => paiementsDe(f).map(p => [f.numero, f.client?.nom, p.date, parseFloat(p.montant) || 0, p.mode, p.ancien ? '' : (p.note || '')]));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([factHeaders, ...factRows]), 'Factures');
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Facture', 'Client', 'Date du paiement', 'Montant', 'Mode', 'Note'], ...paieRows]), 'Paiements');
+        feuillesStock(data).forEach(([nom, lignes]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(lignes), nom));
         XLSX.writeFile(wb, `facturier_export_${ENTREPRISE === 'principale' ? '' : ENTREPRISE + '_'}${new Date().toISOString().split('T')[0]}.xlsx`);
         showToast('Export Excel généré');
       };
